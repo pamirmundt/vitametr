@@ -15,6 +15,7 @@
  */
 
 import type { Catalog } from './contracts.js';
+import { isDistinctSpecimen, splitAnalyteName } from './lab-names.js';
 import type { MetricId, Operator, ProposedMeasurement, TimePrecision } from './types.js';
 import { UNITS } from './units-data.js';
 
@@ -119,6 +120,11 @@ const UNIT_SYNONYMS: Readonly<Record<string, string>> = {
   'ukat/l': 'ukat/L',
   // international units (e.g. TSH)
   'miu/l': 'm[IU]/L',
+  // Czech lab sheets commonly write the milli-international-unit as "mU/L".
+  'mu/l': 'm[IU]/L',
+  // Seen in the wild: a capital I typed for the litre "l" ("mU/I"). unitKey
+  // lowercases, so this entry catches it without touching any real unit.
+  'mu/i': 'm[IU]/L',
   // pressure
   mmhg: 'mm[Hg]',
   kpa: 'kPa',
@@ -282,17 +288,50 @@ export function parseDateTime(raw: string): ParsedDateTime | undefined {
 export type ResolveMetricResult = { metricId: MetricId } | { unresolvedName: string };
 
 /**
+ * A trailing method-version year, as labs append to a computed estimate's name
+ * ("CKD-EPI 2021", "MDRD 2006"). It identifies the equation revision, not a
+ * different analyte, so it is dropped on a retry.
+ */
+const METHOD_YEAR_RE = /^(.*\S)\s+(?:19|20)\d{2}\s*$/;
+
+/**
  * Resolve a metric name against the catalog's alias index. On a miss, return
- * the trimmed original name as `unresolvedName` — never a guess.
+ * the name as `unresolvedName` — never a guess.
+ *
+ * Candidates are tried in decreasing order of certainty: the name as written,
+ * then the name with lab bookkeeping removed (specimen prefix and code
+ * columns, see {@link splitAnalyteName}), a trailing "Full name (ABBR)"
+ * parenthetical, and a method-version year. The catalog's own matching is
+ * tolerant of case, diacritics and punctuation, so "25OH vitamin D" finds the
+ * alias "25-OH vitamin D" without a candidate of its own.
+ *
+ * A non-blood specimen (`U_`, `dU_`, `F_`) is binding: it resolves only against
+ * that specimen's own metric and never falls back to the blood one, because a
+ * urine glucose is a different measurement from a blood glucose (spec §16).
  */
 export function resolveMetric(name: string, catalog: Catalog): ResolveMetricResult {
   const trimmed = name.trim();
   const hit = catalog.resolveAlias(trimmed);
   if (hit) return { metricId: hit.id };
+
+  // Lab bookkeeping around the name: "HAD AM S_Kreatinin" -> "Kreatinin".
+  const { name: bare, specimen } = splitAnalyteName(trimmed);
+  if (isDistinctSpecimen(specimen)) {
+    const qualified =
+      catalog.resolveAlias(`${bare} v moči`) ??
+      catalog.resolveAlias(`${bare} in urine`) ??
+      (specimen === 'stool' ? catalog.resolveAlias(`${bare} ve stolici`) : undefined);
+    return qualified ? { metricId: qualified.id } : { unresolvedName: bare };
+  }
+  if (bare !== trimmed) {
+    const stripped = catalog.resolveAlias(bare);
+    if (stripped) return { metricId: stripped.id };
+  }
+
   // Common lab style "Full name (ABBR)" — e.g. "Glykovaný hemoglobin (HbA1c)"
   // or "Volný tyroxin (fT4)". Retry with the trailing parenthetical removed,
   // then with the parenthetical content alone.
-  const paren = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(trimmed);
+  const paren = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(bare);
   if (paren) {
     const base = paren[1].trim();
     const inner = paren[2].trim();
@@ -303,12 +342,19 @@ export function resolveMetric(name: string, catalog: Catalog): ResolveMetricResu
     // leave it unresolved for review rather than guess the wrong specimen.
     if (/^(moč|moči|urine)$/iu.test(inner)) {
       const urine = base !== '' && catalog.resolveAlias(`${base} v moči`);
-      return urine ? { metricId: urine.id } : { unresolvedName: trimmed };
+      return urine ? { metricId: urine.id } : { unresolvedName: bare };
     }
     const alt = (base !== '' && catalog.resolveAlias(base)) || (inner !== '' && catalog.resolveAlias(inner));
     if (alt) return { metricId: alt.id };
   }
-  return { unresolvedName: trimmed };
+
+  const year = METHOD_YEAR_RE.exec(bare);
+  if (year) {
+    const withoutYear = catalog.resolveAlias(year[1]);
+    if (withoutYear) return { metricId: withoutYear.id };
+  }
+
+  return { unresolvedName: bare };
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@
 
 import type { Catalog } from '../../core/contracts.js';
 import type { Metric, ProposedMeasurement } from '../../core/types.js';
+import { splitAnalyteName } from '../../core/lab-names.js';
 import { normalizeUnit, parseDateTime, parseNumber, resolveMetric } from '../../core/normalize.js';
 import { createUnitsEngine, isUnitCompatibleWithMetric } from '../../core/units.js';
 
@@ -114,15 +115,58 @@ function extractReference(working: string): ReferenceMatch | undefined {
   return undefined;
 }
 
-/** Scan all lines for the document's draw date; the first hit wins. */
+/**
+ * A date introduced by a draw/collection label. Matched first, because a result
+ * sheet prints several dates and only this one is the measurement's time — the
+ * patient's DATE OF BIRTH is usually printed above it (a plain "first date in
+ * the document" rule silently backdates the whole import by decades).
+ */
+const DRAW_DATE_RE = new RegExp(
+  String.raw`(?:odb[ěe]r\w*|odebr[áa]no|collect(?:ed|ion\s+date)|sampl(?:ed|e\s+date)|draw[n]?(?:\s+date)?)\s*:?\s*` +
+    DATE_RE.source,
+  'i',
+);
+
+/**
+ * Lines whose date is definitely NOT the draw date: the patient's birth date
+ * and the sheet's own printing/receipt stamps. Used only by the unlabelled
+ * fallback scan, so a labelled draw date always wins outright.
+ */
+const NON_DRAW_LINE_RE =
+  /datum\s+narozen[íi]|\bnar\.|date\s+of\s+birth|\bdob\b|sestaveno|vyd[áa]no|vyti[šs]t[ěe]no|p[řr]ijato|received|printed|reported/i;
+
+/**
+ * Find the document's draw date: a labelled one anywhere in the document, else
+ * the first date on a line that is not a birth-date/print-stamp line.
+ */
 function findDocumentDate(lines: string[]): { iso: string; precision: 'date' | 'datetime' } | undefined {
   for (const line of lines) {
+    const match = DRAW_DATE_RE.exec(line);
+    if (!match) continue;
+    const parsed = parseDateTime(match[1]);
+    if (parsed) return parsed;
+  }
+  for (const line of lines) {
+    if (NON_DRAW_LINE_RE.test(line)) continue;
     const match = DATE_RE.exec(line);
     if (!match) continue;
     const parsed = parseDateTime(match[1]);
     if (parsed) return parsed;
   }
   return undefined;
+}
+
+/**
+ * A trailing graphical "evaluation" column — the in/out-of-range bar Czech
+ * result sheets draw as pipes and a star (`| |*| |`). It sits to the right of
+ * the reference range, so it must come off before the range is read; otherwise
+ * the end-anchored range patterns never match and the range is lost.
+ */
+const EVAL_TAIL_RE = /\s+\|[\s|*]*$/;
+
+/** Remove trailing layout artefacts that carry no data. */
+function stripEvaluationColumn(line: string): string {
+  return line.replace(EVAL_TAIL_RE, '').trimEnd();
 }
 
 /**
@@ -202,7 +246,9 @@ function parseLine(
     const m = catalog.byId(resolved.metricId);
     metric =
       m && !isUnitCompatibleWithMetric(unitsEngine, m, unitCode)
-        ? { unresolvedName: name }
+        ? // Report the analyte's own name, without the lab's code columns, so
+          // review shows "Kreatinin" rather than "HAD AM S_Kreatinin".
+          { unresolvedName: splitAnalyteName(name).name }
         : resolved.metricId;
   } else {
     metric = { unresolvedName: resolved.unresolvedName };
@@ -320,7 +366,12 @@ function parseQualitativeLine(
   for (let i = tokens.length - 1; i >= 1; i--) {
     const name = tokens.slice(0, i).join(' ');
     if (name.endsWith(':') || !/\p{L}/u.test(name)) continue;
-    const metric = catalog.resolveAlias(name);
+    // resolveMetric, not resolveAlias: a dipstick row carries the same lab
+    // bookkeeping as a numeric one ("VZR U_Glukóza negativní"), and the U_
+    // prefix is what points it at the urine metric rather than the blood one.
+    const resolved = resolveMetric(name, catalog);
+    if (!('metricId' in resolved)) continue;
+    const metric = catalog.byId(resolved.metricId);
     if (!metric) continue;
     // A numeric metric is not a qualitative row; a shorter prefix would only be
     // a worse match, so stop rather than guess.
@@ -346,19 +397,94 @@ function parseQualitativeLine(
 }
 
 /**
+ * Try to read a line as a numeric row that states NO unit — the form Czech lab
+ * sheets use for ratios and computed indices ("B_Normoblasty 0,000", "C_FIB-4
+ * 0,82"). Deliberately the narrowest of the three readers, because a bare
+ * `<words> <number>` shape also describes plenty of non-analyte text
+ * ("Strana 1 z 2"): a proposal is emitted ONLY when the name resolves to a
+ * numeric metric.
+ *
+ * The unit stays `undefined` — the parser never invents one. For a metric with a
+ * single possible unit the pipeline fills in that one correct unit; for a metric
+ * with several (the white-cell differential, where a bare 0,466 could be 0,466 %
+ * or the 46,6 % ratio — a 100-fold difference) the pipeline marks the row as
+ * awaiting the user's choice, and it cannot be imported until they make it.
+ */
+function parseUnitlessLine(
+  rawText: string,
+  catalog: Catalog,
+  date: { iso: string; precision: 'date' | 'datetime' } | undefined,
+): ProposedMeasurement | undefined {
+  let working = rawText.trim();
+  let refLow: number | undefined;
+  let refHigh: number | undefined;
+  let refText: string | undefined;
+  const refMatch = extractReference(working);
+  if (refMatch) {
+    refLow = refMatch.refLow;
+    refHigh = refMatch.refHigh;
+    refText = refMatch.refText;
+    working = working.slice(0, refMatch.index).trim();
+  }
+
+  const tokens = working.length > 0 ? working.split(/\s+/) : [];
+  if (tokens.length < 2) return undefined;
+
+  let valueIndex = tokens.length - 1;
+  if (FLAG_RE.test(tokens[valueIndex])) valueIndex -= 1;
+  if (valueIndex < 1) return undefined;
+  let valueStart = valueIndex;
+  if (OPERATOR_TOKEN_RE.test(tokens[valueStart - 1])) valueStart -= 1;
+  if (valueStart < 1) return undefined;
+
+  const parsedValue = parseNumber(tokens.slice(valueStart, valueIndex + 1).join(' '));
+  if ('error' in parsedValue) return undefined;
+
+  const name = tokens.slice(0, valueStart).join(' ').trim();
+  if (name === '' || name.endsWith(':') || !/\p{L}/u.test(name)) return undefined;
+
+  const resolved = resolveMetric(name, catalog);
+  if (!('metricId' in resolved)) return undefined;
+  const metric = catalog.byId(resolved.metricId);
+  if (!metric || metric.valueType !== 'number') return undefined;
+
+  const proposal: ProposedMeasurement = {
+    metric: resolved.metricId,
+    value: parsedValue.value,
+    confidence: date ? 'medium' : 'low',
+    rawText,
+  };
+  if (parsedValue.operator !== undefined) proposal.operator = parsedValue.operator;
+  if (refLow !== undefined) proposal.refLow = refLow;
+  if (refHigh !== undefined) proposal.refHigh = refHigh;
+  if (refText !== undefined) proposal.refText = refText;
+  if (date) {
+    proposal.takenAt = date.iso;
+    proposal.timePrecision = date.precision;
+  }
+  return proposal;
+}
+
+/**
  * Parse lab-sheet text lines into measurement proposals. Pure: the same input
  * always yields the same output. The draw date is discovered once and shared
  * by every proposal (a lab sheet reflects a single blood draw).
  *
  * Each line is tried as a numeric analyte row first, then as a qualitative
- * (dipstick) row; only the first that matches produces a proposal.
+ * (dipstick) row, then as a unitless numeric row; only the first that matches
+ * produces a proposal. `rawText` always keeps the ORIGINAL line — layout
+ * artefacts are stripped for reading, never from the record.
  */
 export function parseLabLines(lines: string[], catalog: Catalog): ProposedMeasurement[] {
   const date = findDocumentDate(lines);
   const proposals: ProposedMeasurement[] = [];
   for (const line of lines) {
-    const proposal = parseLine(line, catalog, date) ?? parseQualitativeLine(line, catalog, date);
-    if (proposal) proposals.push(proposal);
+    const cleaned = stripEvaluationColumn(line);
+    const proposal =
+      parseLine(cleaned, catalog, date) ??
+      parseQualitativeLine(cleaned, catalog, date) ??
+      parseUnitlessLine(cleaned, catalog, date);
+    if (proposal) proposals.push({ ...proposal, rawText: line });
   }
   return proposals;
 }

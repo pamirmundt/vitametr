@@ -65,6 +65,10 @@ export const UNITS: readonly UnitDef[] = [
   { code: 'mmol/mol', display: 'mmol/mol', dimension: 'fraction', toBase: { factor: 0.001 } },
   // Hematocrit as a volume fraction (L/L 0.45 == 45 %); converts to % via base.
   { code: 'L/L', display: 'l/l', dimension: 'fraction', toBase: { factor: 1 } },
+  // A bare dimensionless ratio, the form Czech (NČLP) lab sheets use for the
+  // white-cell differential ("B_Neutrofily 0,466" == 46,6 %) and for computed
+  // indices such as FIB-4. Same base as L/L, so it converts to % for free.
+  { code: '1', display: '1', displayKey: 'unit.ratio', dimension: 'fraction', toBase: { factor: 1 } },
 
   // rate (base /min)
   { code: '/min', display: '/min', dimension: 'rate', toBase: { factor: 1 } },

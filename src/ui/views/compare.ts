@@ -25,6 +25,7 @@ import { seriesFor, trend } from '../../core/series';
 import { correlate } from '../../core/correlate';
 import { buildChartModel, type ChartConfig } from '../chart-model';
 import { renderChart } from '../chart';
+import { unitLabel } from '../format-value';
 import { resolveDisplayUnit } from './overview-model';
 import { exportPluginById } from '../../plugins/registry';
 import type { ExportContext } from '../../core/contracts';
@@ -369,7 +370,7 @@ function metricName(ctx: AppContext, metric: Metric): string {
 }
 
 function unitDisplay(ctx: AppContext, code: string): string {
-  return ctx.units.getUnit(code)?.display ?? code;
+  return unitLabel(ctx.units, code, ctx.t);
 }
 
 function downloadBlob(blob: Blob, filename: string): void {

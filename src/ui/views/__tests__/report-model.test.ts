@@ -73,6 +73,65 @@ describe('buildReport', () => {
     expect(model.attention.some((a) => a.reason === 'out-of-range')).toBe(true);
   });
 
+  it('reports a metric that was out of range in the past but is fine now', () => {
+    const data = profile([
+      measurement({ metricId: 'builtin:glucose', value: 7.0, takenAt: '2024-03-02', refLow: 3.9, refHigh: 5.6 }),
+      measurement({ metricId: 'builtin:glucose', value: 6.2, takenAt: '2025-04-10', refLow: 3.9, refHigh: 5.6 }),
+      measurement({ metricId: 'builtin:glucose', value: 5.1, takenAt: '2025-12-20', refLow: 3.9, refHigh: 5.6 }),
+    ]);
+    const model = buildReport(data, createCatalog(data), units, 'en', NOW);
+
+    const row = model.categories[0].rows[0];
+    expect(row.rangeState).toBe('in-range');
+    expect(row.pastOutOfRange).toBe(2);
+    expect(row.pastOutOfRangeIso).toBe('2025-04-10');
+
+    // Listed, but as history — never as a current excursion.
+    expect(model.attention).toHaveLength(1);
+    expect(model.attention[0]).toMatchObject({
+      reason: 'past-out-of-range',
+      count: 2,
+      lastIso: '2025-04-10',
+    });
+  });
+
+  it('counts earlier excursions on a value that is STILL out of range', () => {
+    const data = profile([
+      measurement({ metricId: 'builtin:glucose', value: 7.0, takenAt: '2024-03-02', refLow: 3.9, refHigh: 5.6 }),
+      measurement({ metricId: 'builtin:glucose', value: 6.4, takenAt: '2025-12-20', refLow: 3.9, refHigh: 5.6 }),
+    ]);
+    const model = buildReport(data, createCatalog(data), units, 'en', NOW);
+
+    expect(model.attention).toHaveLength(1);
+    expect(model.attention[0]).toMatchObject({ reason: 'out-of-range', count: 1 });
+  });
+
+  it('judges every reading against the range its own source stated', () => {
+    // The old reading is in range by the range it came with; only the newer,
+    // tightened range would have made it an excursion. It must not be one.
+    const data = profile([
+      measurement({ metricId: 'builtin:glucose', value: 5.9, takenAt: '2024-03-02', refLow: 3.9, refHigh: 6.1 }),
+      measurement({ metricId: 'builtin:glucose', value: 5.1, takenAt: '2025-12-20', refLow: 3.9, refHigh: 5.6 }),
+    ]);
+    const model = buildReport(data, createCatalog(data), units, 'en', NOW);
+
+    expect(model.categories[0].rows[0].pastOutOfRange).toBe(0);
+    expect(model.attention).toEqual([]);
+  });
+
+  it('puts current excursions before historical ones', () => {
+    const data = profile([
+      // Hemoglobin is out of range right now.
+      measurement({ metricId: 'builtin:hemoglobin', value: 100, unit: 'g/L', takenAt: '2025-12-20', refLow: 135, refHigh: 175 }),
+      // Glucose only used to be.
+      measurement({ metricId: 'builtin:glucose', value: 7.0, takenAt: '2024-03-02', refLow: 3.9, refHigh: 5.6 }),
+      measurement({ metricId: 'builtin:glucose', value: 5.1, takenAt: '2025-12-20', refLow: 3.9, refHigh: 5.6 }),
+    ]);
+    const model = buildReport(data, createCatalog(data), units, 'en', NOW);
+
+    expect(model.attention.map((a) => a.reason)).toEqual(['out-of-range', 'past-out-of-range']);
+  });
+
   it('flags a long-unmeasured value as stale', () => {
     // ~400 days before NOW.
     const data = profile([

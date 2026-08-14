@@ -115,8 +115,276 @@ export interface ChartModel {
 }
 
 // ---------------------------------------------------------------------------
+// Sparkline model (the row trace in the overview list / print summary)
+// ---------------------------------------------------------------------------
+
+export interface SparklineConfig {
+  /** Nominal viewBox width; the SVG is stretched to the row with `preserveAspectRatio="none"`. */
+  width: number;
+  height: number;
+  /**
+   * Fixed time domain `[startMs, endMs]`, supplied by the CALLER — the extent
+   * SHARED by every row of the screen (the chosen period ∩ data in print), so a
+   * reading at the same instant lands at the same x in every trace. The trace
+   * never derives its own domain.
+   */
+  domain: [number, number];
+  /**
+   * Instants of the shared axis ticks (see {@link timeTicks}). Those inside the
+   * domain come back as {@link SparklineModel.grid} x-coordinates, so each row
+   * can hint the same calendar marks the axis strip labels.
+   */
+  ticks?: readonly number[];
+  /** Horizontal inset so the end marker is not clipped. */
+  padX?: number;
+  /** Vertical inset so the stroke and the end marker are not clipped. */
+  padY?: number;
+  /**
+   * Downsample above this many points. Absent ⇒ derived from `width`
+   * (~0.4 points per nominal pixel, i.e. 120 points over 300 px).
+   */
+  maxPoints?: number;
+}
+
+/** A marker position within the trace (already in viewBox coordinates). */
+export interface SparklineMarker {
+  x: number;
+  y: number;
+}
+
+export interface SparklineModel {
+  width: number;
+  height: number;
+  /** No point falls inside the domain — the caller draws nothing. */
+  isEmpty: boolean;
+  /** Points inside the domain BEFORE downsampling (drives "single reading"). */
+  count: number;
+  /** `count === 1`: the caller draws the band, the dot and the muted note. */
+  single: boolean;
+  /** SVG polyline `points`, ascending in time; empty for a single point. */
+  polyline: string;
+  /** Stepwise source-stated reference band, merged where the bounds hold. */
+  bands: BandSegment[];
+  /** X of each shared-axis tick that falls inside the domain (calendar marks). */
+  grid: number[];
+  /** Censored (`<`/`>`) readings that survived downsampling — hollow markers. */
+  censored: SparklineMarker[];
+  /**
+   * Every reading except the newest, as a small dot — but only for a short
+   * series. Two readings joined by a straight line look like a rule drawn
+   * through the row; the same two readings as dots read as a chart at once. A
+   * long series needs no help and would only smear into a band of dots.
+   */
+  readings: SparklineMarker[];
+  /** The newest reading inside the domain — the end dot. */
+  last?: SparklineMarker;
+  /** Whether that newest reading lies outside its own stated range. */
+  lastOutOfRange: boolean;
+  lastValue?: number;
+  /** Instant of the oldest / newest reading inside the domain — the end labels. */
+  from?: number;
+  to?: number;
+  xDomain: [number, number];
+  yDomain: [number, number];
+}
+
+/**
+ * Min–max downsampling: split the series into `buckets` equal slices and keep
+ * the extreme readings of each (in time order), so the trace's shape survives
+ * while the coordinate count stays bounded. The first and last readings are
+ * always kept, so the trace still starts and ends on real data. Censored
+ * readings are not privileged — a marker only shows for one that survives.
+ */
+function minMaxBuckets(points: ChartPoint[], buckets: number): ChartPoint[] {
+  const n = points.length;
+  if (buckets < 1 || n <= buckets) return points;
+  const kept = new Set<number>([0, n - 1]);
+  for (let b = 0; b < buckets; b += 1) {
+    const start = Math.floor((b * n) / buckets);
+    const end = Math.floor(((b + 1) * n) / buckets);
+    if (end <= start) continue;
+    let lo = start;
+    let hi = start;
+    for (let i = start + 1; i < end; i += 1) {
+      if (points[i].value < points[lo].value) lo = i;
+      if (points[i].value > points[hi].value) hi = i;
+    }
+    kept.add(lo);
+    kept.add(hi);
+  }
+  return [...kept].sort((a, b) => a - b).map((i) => points[i]);
+}
+
+/**
+ * Build the row trace: no axes, no ticks, no labels — just the stepwise
+ * reference band, one polyline and the end marker, in a `width`×`height` box.
+ *
+ * The time domain arrives from the caller (see {@link SparklineConfig.domain});
+ * readings outside it are dropped rather than clamped, so a series that stops
+ * early stops early. The value domain spans the readings AND their stated
+ * bounds, padded 10 % each side; a constant series becomes a horizontal line
+ * through the middle. Pure — no DOM, no clock, no unit conversion.
+ */
+export function buildSparklineModel(
+  points: ChartPoint[],
+  config: SparklineConfig,
+): SparklineModel {
+  const { width, height, domain } = config;
+  const padX = config.padX ?? 4;
+  const padY = config.padY ?? 4;
+  const plot: PlotRect = {
+    x: padX,
+    y: padY,
+    width: Math.max(0, width - padX * 2),
+    height: Math.max(0, height - padY * 2),
+  };
+
+  const [d0, d1] = domain;
+  const xDomain: [number, number] = d1 > d0 ? [d0, d1] : [d0, d0];
+
+  const inside = points
+    .filter((p) => Number.isFinite(p.t) && p.t >= xDomain[0] && p.t <= xDomain[1])
+    .sort((a, b) => a.t - b.t);
+
+  const empty: SparklineModel = {
+    width,
+    height,
+    isEmpty: true,
+    count: 0,
+    single: false,
+    polyline: '',
+    bands: [],
+    grid: [],
+    censored: [],
+    readings: [],
+    lastOutOfRange: false,
+    xDomain,
+    yDomain: [0, 0],
+  };
+  if (inside.length === 0) return empty;
+
+  // --- Y domain: readings AND the band, +10 % each side --------------------
+  // Only a two-sided range widens the domain, because only a two-sided range is
+  // drawn: making room for a bound with no band would flatten the trace to buy
+  // nothing (a lone `≤ 5.0` under a 5.9–6.4 series is the common case).
+  const yValues: number[] = [];
+  for (const p of inside) {
+    yValues.push(p.value);
+    if (p.refLow !== undefined && p.refHigh !== undefined) {
+      yValues.push(p.refLow, p.refHigh);
+    }
+  }
+  let dataMin = Math.min(...yValues);
+  let dataMax = Math.max(...yValues);
+  if (dataMin === dataMax) {
+    // Constant series: a symmetric window so the line lands in the middle.
+    const d = Math.abs(dataMin) > 0 ? Math.abs(dataMin) : 1;
+    dataMin -= d;
+    dataMax += d;
+  }
+  const yPad = (dataMax - dataMin) * 0.1;
+  const yDomain: [number, number] = [dataMin - yPad, dataMax + yPad];
+
+  const scaleX = scaleLinear(xDomain, [plot.x, plot.x + plot.width]);
+  const scaleY = scaleLinear(yDomain, [plot.y + plot.height, plot.y]);
+
+  // --- Stepwise reference band (over ALL readings, before downsampling) ----
+  // On a SHARED axis the band may not run to the plot edges: a metric measured
+  // for one year out of seven would claim a range over six years it never had.
+  // It therefore covers the reading span only, with a marker's worth of overhang
+  // so the first and last dots sit inside it.
+  //
+  // A LONE reading has no span at all, so it gets no band: on a shared axis that
+  // would be a stray grey square floating somewhere on the timeline, saying
+  // nothing the "single reading" note and the Range column do not already say.
+  const plotRight = plot.x + plot.width;
+  const plotBottom = plot.y + plot.height;
+  const firstX = scaleX(inside[0].t);
+  const lastX = scaleX(inside[inside.length - 1].t);
+  const bandStart = Math.max(plot.x, firstX - 2);
+  const bandEnd = Math.min(plotRight, lastX + 2);
+  const bands: BandSegment[] = [];
+  for (let i = 0; inside.length > 1 && i < inside.length; i += 1) {
+    const p = inside[i];
+    if (p.refLow === undefined || p.refHigh === undefined) continue;
+    const xStart = i === 0 ? bandStart : scaleX(p.t);
+    const xEnd = i < inside.length - 1 ? scaleX(inside[i + 1].t) : bandEnd;
+    const yTop = clamp(scaleY(p.refHigh), plot.y, plotBottom);
+    const yBottom = clamp(scaleY(p.refLow), plot.y, plotBottom);
+    const prev = bands[bands.length - 1];
+    if (
+      prev !== undefined &&
+      prev.refLow === p.refLow &&
+      prev.refHigh === p.refHigh &&
+      Math.abs(prev.x + prev.width - xStart) < 0.5
+    ) {
+      prev.width = Math.max(0, xEnd - prev.x);
+      continue;
+    }
+    bands.push({
+      x: xStart,
+      y: yTop,
+      width: Math.max(0, xEnd - xStart),
+      height: Math.max(0, yBottom - yTop),
+      refLow: p.refLow,
+      refHigh: p.refHigh,
+    });
+  }
+
+  // --- Trace ---------------------------------------------------------------
+  const maxPoints = config.maxPoints ?? Math.max(2, Math.round(width * 0.4));
+  const drawn =
+    inside.length > maxPoints ? minMaxBuckets(inside, Math.max(1, Math.floor(maxPoints / 2))) : inside;
+
+  const coords = drawn.map((p) => ({ p, x: scaleX(p.t), y: scaleY(p.value) }));
+  const polyline =
+    coords.length > 1 ? coords.map((c) => `${round2(c.x)},${round2(c.y)}`).join(' ') : '';
+  const censored = coords
+    .filter((c) => c.p.operator !== undefined)
+    .map((c) => ({ x: round2(c.x), y: round2(c.y) }));
+  // The newest reading has its own (bigger) end marker, so it is left out here.
+  const readings =
+    coords.length > 1 && coords.length <= READING_DOT_LIMIT
+      ? coords.slice(0, -1).map((c) => ({ x: round2(c.x), y: round2(c.y) }))
+      : [];
+
+  const lastPoint = inside[inside.length - 1];
+  const lastCoord = coords[coords.length - 1];
+  const lastPosition = rangePositionOf(lastPoint.value, lastPoint.refLow, lastPoint.refHigh);
+
+  return {
+    width,
+    height,
+    isEmpty: false,
+    count: inside.length,
+    single: inside.length === 1,
+    polyline,
+    bands,
+    grid: (config.ticks ?? [])
+      .filter((t) => t > xDomain[0] && t < xDomain[1])
+      .map((t) => round2(scaleX(t))),
+    censored,
+    readings,
+    last: { x: round2(lastCoord.x), y: round2(lastCoord.y) },
+    lastOutOfRange: lastPosition === 'above' || lastPosition === 'below',
+    lastValue: lastPoint.value,
+    from: inside[0].t,
+    to: lastPoint.t,
+    xDomain,
+    yDomain,
+  };
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+/** Above this many drawn points the per-reading dots stop helping and smear. */
+const READING_DOT_LIMIT = 12;
 
 const DAY_MS = 86_400_000;
 const AVG_MONTH_MS = 30.436_875 * DAY_MS;

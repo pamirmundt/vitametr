@@ -18,6 +18,7 @@ import type { StringKey } from '../../i18n/index';
 import type { Metric, MetricId } from '../../core/types';
 import { manualImportPlugin } from '../../plugins/import/manual';
 import { parseNumber } from '../../core/normalize';
+import { unitLabel } from '../format-value';
 import { dataSwitch } from '../components/data-switch';
 import { metricPicker } from '../components/metric-picker';
 import { sourcePicker } from '../components/source-picker';
@@ -134,7 +135,7 @@ export const entryView: View = {
     const metricName = (m: Metric): string =>
       m.customName ?? (m.nameKey ? ctx.t(m.nameKey as StringKey) : (m.key ?? ''));
 
-    const unitLabel = (code: string): string => ctx.units.getUnit(code)?.display ?? code;
+    const unitText = (code: string): string => unitLabel(ctx.units, code, ctx.t);
 
     /** Most recent unit the user recorded a metric in (for prefill). */
     function lastUsedUnit(metricId: string): string | undefined {
@@ -334,7 +335,7 @@ export const entryView: View = {
       field.append(el('label', { text: ctx.t('entry.unit'), for: `unit-${row.key}` }));
       const select = el('select', { id: `unit-${row.key}` });
       for (const code of metric.units) {
-        const opt = el('option', { value: code, text: unitLabel(code) });
+        const opt = el('option', { value: code, text: unitText(code) });
         if (code === row.unit) opt.selected = true;
         select.append(opt);
       }

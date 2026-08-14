@@ -47,6 +47,13 @@ export interface UnitDef {
   code: string;
   /** Human-readable symbol, e.g. 'mmol/l', 'mmHg', '°C'. */
   display: string;
+  /**
+   * i18n key for units that have no symbol to print. A bare dimensionless ratio
+   * is `1` in UCUM, which read next to a number ("0 1") says nothing to anyone;
+   * such a unit carries a translated word instead. Symbols never do — they are
+   * the same in every language.
+   */
+  displayKey?: string;
   dimension: DimensionId;
   /** Linear map to the dimension's base unit: base = value * factor + offset. */
   toBase: { factor: number; offset?: number };
@@ -346,6 +353,26 @@ export interface ProfileSettings {
    * applies at both widths. No migration needed.
    */
   overviewLayout?: 'grid' | 'list';
+  /**
+   * Which list rows draw the trend trace under the value row: 'hidden' (none),
+   * 'outliers' (watched metrics plus any that ever left their stated range) or
+   * 'all'. Only the list layout has traces — tiles carry the wording instead.
+   * Additive/optional: absent ⇒ 'outliers'. No migration needed.
+   */
+  overviewSparkline?: 'hidden' | 'outliers' | 'all';
+  /**
+   * Which rows draw a trend trace in the Summary / print report. Deliberately
+   * SEPARATE from `overviewSparkline`: the printed sheet may need to differ from
+   * what is on screen. Additive/optional: absent ⇒ 'outliers'.
+   */
+  reportSparkline?: 'hidden' | 'outliers' | 'all';
+  /**
+   * Metrics the Summary / print report shows, as chosen in its picker. Absent ⇒
+   * everything with data (the previous behaviour), so an untouched profile is
+   * unaffected. Ids that no longer exist are ignored on read, and a hand-off from
+   * a filtered Overview overrides it for that visit without overwriting it.
+   */
+  reportMetricIds?: MetricId[];
   /**
    * Ids of the packs the user has activated — the "Core" pack (`builtin:core`)
    * plus any bundled category packs (see `core/packs.ts` / `core/packs-data.ts`).

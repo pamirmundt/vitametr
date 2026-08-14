@@ -1,0 +1,152 @@
+/* Row trend trace (overview list + print summary).
+
+   The trace is a second line under the metric row, stretched over the FULL row
+   width; the period is named once by the shared axis strip below the list, not
+   per row. Heights come from the spec — 28 px desktop, 22 px phone, 18 px print
+   — and the SVG is stretched with preserveAspectRatio="none", so every stroke
+   declares non-scaling-stroke and markers are drawn as round-capped zero-length
+   paths (see sparkline.ts). */
+
+.metric-spark-row {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.metric-spark-plot {
+  position: relative;
+  min-width: 0;
+}
+
+/* Mobile-first: 22 px on the phone, 28 px from the tablet width up. */
+.metric-spark-svg {
+  display: block;
+  width: 100%;
+  height: 22px;
+}
+
+/* Calendar marks of the SHARED axis, repeated faintly inside every trace so a
+   row can be read against the strip below without counting pixels. */
+.metric-spark-grid {
+  stroke: var(--spark-grid);
+  stroke-width: 1;
+}
+.metric-spark-band {
+  fill: var(--spark-band);
+  stroke: none;
+}
+.metric-spark-line {
+  stroke: var(--accent);
+  stroke-width: 1.7;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+/* Markers: the stroke width IS the diameter (round cap, zero-length path). */
+.metric-spark-reading {
+  stroke: var(--accent);
+  stroke-width: 3.4;
+}
+.metric-spark-end {
+  stroke: var(--accent);
+  stroke-width: 6.4;
+}
+.metric-spark-end.is-out {
+  stroke: var(--danger);
+}
+.metric-spark-censored-ring {
+  stroke: var(--accent);
+  stroke-width: 5.4;
+}
+.metric-spark-censored-core {
+  stroke: var(--surface);
+  stroke-width: 3;
+}
+
+/* The "single reading" note floats over the trace so it can never take width
+   away from it (the trace still draws its band and its dot underneath). */
+.metric-spark-single {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  font-size: 0.65rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* The shared axis strip: one hairline with a tick and a label per calendar mark,
+   drawn once under the traces it dates. */
+.metric-spark-axis {
+  position: relative;
+  height: 16px;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+.metric-spark-tick {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  font-size: 0.65rem;
+  line-height: 1;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.metric-spark-tick::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 1px;
+  height: 3px;
+  background: var(--border);
+}
+/* An end mark hangs inwards (see sparkline.ts), so its tick follows the text. */
+.metric-spark-tick[style*='transform: none']::before {
+  left: 0;
+}
+
+@media (min-width: 560px) {
+  .metric-spark-svg {
+    height: 28px;
+  }
+}
+
+/* Print: greyscale, thinner, shorter. Colour never carries meaning on paper —
+   the Status column does. */
+@media print {
+  .metric-spark-svg {
+    height: 18px;
+  }
+  .metric-spark-grid {
+    stroke: #e6e6e6;
+  }
+  .metric-spark-band {
+    fill: #efefef;
+  }
+  .metric-spark-line {
+    stroke: #3a3a3a;
+    stroke-width: 1.1;
+  }
+  .metric-spark-reading {
+    stroke: #3a3a3a;
+    stroke-width: 2.6;
+  }
+  .metric-spark-end,
+  .metric-spark-end.is-out,
+  .metric-spark-censored-ring {
+    stroke: #1b1b1b;
+  }
+  .metric-spark-censored-core {
+    stroke: #fff;
+  }
+  .metric-spark-axis {
+    border-top-color: #bbb;
+  }
+  .metric-spark-tick {
+    color: #555;
+  }
+  .metric-spark-tick::before {
+    background: #bbb;
+  }
+}

@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { ReviewItem } from '../../../core/contracts';
 import type { Metric, MetricId, ProfileData, ProposedMeasurement } from '../../../core/types';
 import {
+  buildMetricHistory,
   bulkDecideUndecided,
   canAccept,
   canCommit,
@@ -18,9 +19,11 @@ import {
   groupConflictsByMetric,
   hiddenPackCounts,
   isResolved,
+  needsUnit,
   suggestMetrics,
   summarize,
   toCommitList,
+  type MetricSuggestion,
 } from '../review-model';
 import { CURRENT_SCHEMA_VERSION } from '../../../core/types';
 import type { ProfileId } from '../../../core/types';
@@ -50,6 +53,28 @@ function item(opts: {
     proposed,
     ...(opts.resolvedMetricId ? { resolvedMetricId: mid(opts.resolvedMetricId) } : {}),
     decision: opts.decision,
+  };
+}
+
+/**
+ * A resolved row the file left unitless, on a metric with several candidate
+ * units — what `prepare` produces for e.g. "B_Hematokrit 0,466".
+ */
+function unitlessItem(opts: {
+  resolvedMetricId: string;
+  decision: ReviewItem['decision'];
+  unitChoice?: string;
+}): ReviewItem {
+  return {
+    proposed: {
+      metric: mid(opts.resolvedMetricId),
+      value: 0.466,
+      confidence: 'medium',
+    },
+    resolvedMetricId: mid(opts.resolvedMetricId),
+    decision: opts.decision,
+    unitChoices: ['L/L', '%'],
+    ...(opts.unitChoice ? { unitChoice: opts.unitChoice } : {}),
   };
 }
 
@@ -220,11 +245,64 @@ describe('summarize', () => {
       resolved: 2,
       unresolved: 2,
       accepted: 2,
+      awaitingUnit: 0,
     });
   });
 
   it('an empty batch summarizes to all zeros', () => {
-    expect(summarize([])).toEqual({ total: 0, resolved: 0, unresolved: 0, accepted: 0 });
+    expect(summarize([])).toEqual({
+      total: 0,
+      resolved: 0,
+      unresolved: 0,
+      accepted: 0,
+      awaitingUnit: 0,
+    });
+  });
+
+  it('counts the rows still waiting for the user to pick a unit', () => {
+    const items = [
+      item({ resolvedMetricId: 'builtin:glucose', decision: 'accept' }),
+      unitlessItem({ resolvedMetricId: 'builtin:hematocrit', decision: 'pending' }),
+      unitlessItem({
+        resolvedMetricId: 'builtin:neutrophils',
+        decision: 'accept',
+        unitChoice: '%',
+      }),
+    ];
+    const summary = summarize(items);
+    expect(summary.resolved).toBe(3);
+    expect(summary.awaitingUnit).toBe(1); // the settled one no longer waits
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The unit gate: a resolved row the file left unitless
+// ---------------------------------------------------------------------------
+
+describe('needsUnit', () => {
+  it('blocks a resolved row whose unit the file omitted and the metric cannot fix', () => {
+    const row = unitlessItem({ resolvedMetricId: 'builtin:hematocrit', decision: 'pending' });
+    expect(isResolved(row)).toBe(true);
+    expect(needsUnit(row)).toBe(true);
+    // Resolved but NOT acceptable: 0,466 % and 0,466 L/L differ a hundredfold.
+    expect(canAccept(row)).toBe(false);
+    expect(toCommitList([{ ...row, decision: 'accept' }])).toEqual([]);
+  });
+
+  it('releases the row once the user picks one of the candidate units', () => {
+    const row = unitlessItem({
+      resolvedMetricId: 'builtin:hematocrit',
+      decision: 'accept',
+      unitChoice: 'L/L',
+    });
+    expect(needsUnit(row)).toBe(false);
+    expect(canAccept(row)).toBe(true);
+    expect(toCommitList([row])).toHaveLength(1);
+  });
+
+  it('leaves a row whose file DID state a unit alone', () => {
+    const row = item({ resolvedMetricId: 'builtin:glucose', decision: 'accept' });
+    expect(needsUnit(row)).toBe(false);
   });
 });
 
@@ -329,35 +407,42 @@ describe('suggestMetrics', () => {
   const units = createUnitsEngine();
   const translate = (key: string): string => t(key as StringKey);
 
-  const idsOf = (ms: Metric[]): string[] => ms.map((m) => m.key ?? m.id);
+  const idsOf = (ms: MetricSuggestion[]): string[] => ms.map((s) => s.metric.key ?? s.metric.id);
 
   beforeEach(() => setLocale('en'));
 
-  it('PDW + fl surfaces platelet/RBC-volume metrics, MPV at the top, never cholesterol', () => {
-    const out = suggestMetrics('PDW - distr. křivka trombo', 'fl', metrics, units, translate);
+  it('PDW + fl surfaces platelet/RBC-volume metrics, PDW at the top, never cholesterol', () => {
+    const out = suggestMetrics(
+      { name: 'PDW - distr. křivka trombo', unit: 'fl' },
+      metrics,
+      units,
+      translate,
+    );
     const keys = idsOf(out);
 
     expect(out.length).toBeGreaterThan(0);
-    // MPV ("Střední objem trombocytu") wins: name token "trombo" + fl unit.
-    expect(keys[0]).toBe('mpv');
-    // MCV may appear (fl unit); cholesterol (mmol/L only) never does.
-    expect(keys).toContain('mcv');
+    // PDW itself wins now that the catalog carries it: the alias "PDW" is a
+    // whole-token hit on the raw name and fl is its unit. (Before the metric
+    // existed, MPV took this slot on "trombo" + fl alone.)
+    expect(keys[0]).toBe('pdw');
+    // MPV/MCV may appear (fl unit); cholesterol (mmol/L only) never does.
+    expect(keys).toContain('mpv');
     for (const chol of ['total-cholesterol', 'ldl-cholesterol', 'hdl-cholesterol']) {
       expect(keys).not.toContain(chol);
     }
   });
 
   it('a clean name hit ranks its metric first (Glykémie → glucose)', () => {
-    const out = suggestMetrics('Glykémie', undefined, metrics, units, translate);
+    const out = suggestMetrics({ name: 'Glykémie' }, metrics, units, translate);
     expect(idsOf(out)[0]).toBe('glucose');
   });
 
   it('no unit and a gibberish name yields no suggestions', () => {
-    expect(suggestMetrics('qwertzuiop asdfgh', undefined, metrics, units, translate)).toEqual([]);
+    expect(suggestMetrics({ name: 'qwertzuiop asdfgh' }, metrics, units, translate)).toEqual([]);
   });
 
   it('a unit-only match still surfaces the fl metrics (the unit carries the signal)', () => {
-    const out = suggestMetrics('zzz nonsense marker', 'fl', metrics, units, translate);
+    const out = suggestMetrics({ name: 'zzz nonsense marker', unit: 'fl' }, metrics, units, translate);
     const keys = idsOf(out);
     expect(keys).toContain('mpv');
     expect(keys).toContain('mcv');
@@ -367,7 +452,119 @@ describe('suggestMetrics', () => {
   });
 
   it('returns at most three candidates', () => {
-    const out = suggestMetrics('cholesterol', 'mmol/L', metrics, units, translate);
+    const out = suggestMetrics({ name: 'cholesterol', unit: 'mmol/L' }, metrics, units, translate);
     expect(out.length).toBeLessThanOrEqual(3);
+  });
+
+  it('a suggestion with no history is marked as such and carries no evidence', () => {
+    const [first] = suggestMetrics({ name: 'Glykémie' }, metrics, units, translate);
+    expect(first.fromHistory).toBe(false);
+    expect(first.history).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// suggestMetrics — the user's own history as the third signal
+// ---------------------------------------------------------------------------
+
+describe('suggestMetrics with the profile history', () => {
+  const catalog = createCatalog(emptyProfile());
+  const metrics = catalog.all();
+  const units = createUnitsEngine();
+  const translate = (key: string): string => t(key as StringKey);
+  const idsOf = (ms: MetricSuggestion[]): string[] => ms.map((s) => s.metric.key ?? s.metric.id);
+
+  beforeEach(() => setLocale('en'));
+
+  /** A profile that already tracks creatinine and uric acid — both in µmol/L. */
+  function profileWithHistory(): ProfileData {
+    const data = emptyProfile();
+    data.sources = [{ id: 'src-1' as never, name: 'City Lab', kind: 'lab' } as never];
+    data.measurements = [
+      measurement('builtin:creatinine', 79, 'umol/L', 62, 106, '2026-03-04', 'src-1'),
+      measurement('builtin:creatinine', 82, 'umol/L', 62, 106, '2026-06-11', 'src-1'),
+      measurement('builtin:uric-acid', 310, 'umol/L', 202, 417, '2026-06-11', 'src-1'),
+    ];
+    return data;
+  }
+
+  function measurement(
+    metricId: string,
+    value: number,
+    unit: string,
+    refLow: number,
+    refHigh: number,
+    takenAt: string,
+    sourceId: string,
+  ): ProfileData['measurements'][number] {
+    return {
+      id: `m-${metricId}-${takenAt}` as never,
+      profileId: 'p1' as ProfileId,
+      metricId: mid(metricId),
+      value,
+      unit,
+      takenAt,
+      timePrecision: 'date',
+      refLow,
+      refHigh,
+      sourceId: sourceId as never,
+      status: 'confirmed',
+      origin: { pluginId: 'test' },
+      createdAt: takenAt,
+      modifiedAt: takenAt,
+    };
+  }
+
+  it('indexes the latest reading and the source-stated range per metric', () => {
+    const history = buildMetricHistory(profileWithHistory());
+    const creatinine = history.get(mid('builtin:creatinine'))!;
+    expect(creatinine.lastValue).toBe(82); // the later of the two, not the first seen
+    expect(creatinine.lastTakenAt).toBe('2026-06-11');
+    expect(creatinine.count).toBe(2);
+    expect(creatinine.unit).toBe('umol/L');
+    expect(creatinine.refLow).toBe(62);
+    expect(creatinine.refHigh).toBe(106);
+  });
+
+  it('an unreadable name is matched onto the analyte with the same stored range', () => {
+    const history = buildMetricHistory(profileWithHistory());
+    // A code-only row from a different lab: the name says nothing at all, but the
+    // unit and the reference range are the ones the user stores for uric acid.
+    const row = { name: 'XQ-114', unit: 'umol/L', value: 310, refLow: 202, refHigh: 417 };
+
+    const withHistory = suggestMetrics(row, metrics, units, translate, history);
+    expect(idsOf(withHistory)[0]).toBe('uric-acid');
+    expect(withHistory[0].fromHistory).toBe(true);
+    expect(withHistory[0].history?.lastValue).toBe(310);
+
+    // Without the history every molar-concentration analyte scores the same and
+    // the tie falls to catalog order — the row's own numbers are what break it.
+    const withoutHistory = suggestMetrics(row, metrics, units, translate);
+    expect(idsOf(withoutHistory)[0]).not.toBe('uric-acid');
+    expect(withoutHistory.every((s) => !s.fromHistory)).toBe(true);
+  });
+
+  it('history never drags a row onto a dimensionally impossible metric', () => {
+    const history = buildMetricHistory(profileWithHistory());
+    // The same numbers, stated in a unit neither analyte can be in.
+    const keys = idsOf(
+      suggestMetrics(
+        { name: 'XQ-114', unit: 'fl', value: 310, refLow: 202, refHigh: 417 },
+        metrics,
+        units,
+        translate,
+        history,
+      ),
+    );
+    expect(keys).not.toContain('uric-acid');
+    expect(keys).not.toContain('creatinine');
+  });
+
+  it('a name hit on a metric the user never measured stays a name hit', () => {
+    const history = buildMetricHistory(profileWithHistory());
+    const [first] = suggestMetrics({ name: 'Glykémie' }, metrics, units, translate, history);
+    expect(first.metric.key).toBe('glucose');
+    expect(first.fromHistory).toBe(false);
+    expect(first.history).toBeUndefined();
   });
 });

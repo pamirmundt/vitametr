@@ -13,13 +13,13 @@
  */
 
 import type { AppContext, View } from '../app-context';
-import type { Metric } from '../../core/types';
+import type { Measurement, Metric } from '../../core/types';
 import type { Locale, StringKey } from '../../i18n/index';
 import { formatDateTime, formatNumber, plural } from '../../i18n/index';
 import { WATCHED_TAG, tagLabel, usedTags } from '../../core/tags';
 import { tagChip } from '../components/tag-chip';
 import { watchStar } from '../components/watch-star';
-import { valueWithUnitEl } from '../format-value';
+import { unitLabel, valueWithUnitEl } from '../format-value';
 import { rangeStatusKey } from '../range-status';
 import {
   buildOverviewEntries,
@@ -29,6 +29,7 @@ import {
   groupOverviewEntries,
   isOverviewFiltered,
   rangeBarPosition,
+  resolveDisplayUnit,
   sparklinePath,
   subsetLabelSpec,
   type DeltaKind,
@@ -37,6 +38,16 @@ import {
   type OverviewValue,
   type RangeState,
 } from './overview-model';
+import { DEFAULT_SPARKLINE_MODE, type SparklineMode } from './sparkline-model';
+import {
+  buildTraceSet,
+  traceAxis,
+  traceRow as buildTraceRow,
+  type TraceData,
+  type TraceInputs,
+  type TraceSet,
+} from './sparkline-view';
+import { endOfDayMs } from '../../core/snapshot';
 import { isoDay } from './export-model';
 import { setReportSelection } from './report';
 import { runAutoImport } from './import-actions';
@@ -82,11 +93,17 @@ export const overviewView: View = {
     // settings) but is never persisted between sessions.
     let query = '';
     let activeTag: string | undefined;
+    // The summary chip acting as a filter ("show me just the 5 above range").
+    let chipState: ChipState | undefined;
     // Time-travel state (in-memory only — never persisted; reload ⇒ live/today).
     // `asOf` is an ISO date; when set the overview shows the snapshot at/before it.
     let asOf: string | undefined;
     let asOfOpen = false; // whether the date picker is revealed (live mode)
     let asOfFocus = false; // focus the picker on the next paint (after a reveal)
+    // Which list rows draw a trend trace. Persisted per profile; read once here
+    // and written back on every change (the list toggle, unlike the filters).
+    let sparkMode: SparklineMode =
+      ctx.data().settings.overviewSparkline ?? DEFAULT_SPARKLINE_MODE;
 
     const paint = (): void => {
       container.replaceChildren();
@@ -179,36 +196,56 @@ export const overviewView: View = {
       // label/state in sync as the filter changes (the header is not repainted).
       const goToReport = (): void =>
         inSnapshot ? ctx.navigate('report', asOf) : ctx.navigate('report');
+      // The visible set: the search/tag filter and the chip filter compose.
+      const visibleEntries = (): CardEntry[] =>
+        filterOverviewEntries(entries.filter(matchesChip), { query, activeTag });
+      const matchesChip = (e: CardEntry): boolean => {
+        if (chipState === undefined) return true;
+        const state = e.model?.rangeState;
+        if (state === undefined) return false; // empty at the reference date
+        return chipState === 'unknown'
+          ? state !== 'in-range' && state !== 'above' && state !== 'below'
+          : state === chipState;
+      };
+      const anyFilter = (): boolean =>
+        isOverviewFiltered({ query, activeTag }) || chipState !== undefined;
+
       const summaryBtn = document.createElement('button');
       summaryBtn.type = 'button';
       summaryBtn.className = 'overview-summary-btn';
       const refreshSummary = (): void => {
-        const filter = { query, activeTag };
-        if (!isOverviewFiltered(filter)) {
+        if (!anyFilter()) {
           summaryBtn.textContent = ctx.t('report.open');
           summaryBtn.classList.remove('is-filter');
           summaryBtn.removeAttribute('aria-haspopup');
           return;
         }
-        const count = filterOverviewEntries(entries, filter).length;
+        const count = visibleEntries().length;
         summaryBtn.textContent = ctx.t('overview.printFiltered', { n: count });
         summaryBtn.classList.add('is-filter');
         summaryBtn.setAttribute('aria-haspopup', 'menu');
       };
       summaryBtn.addEventListener('click', () => {
         const filter = { query, activeTag };
-        if (!isOverviewFiltered(filter)) {
+        if (!anyFilter()) {
           goToReport();
           return;
         }
-        const filtered = filterOverviewEntries(entries, filter);
+        const filtered = visibleEntries();
         openPrintMenu(ctx, summaryBtn, {
           filteredCount: filtered.length,
           totalCount: entries.length,
           onOnly: () => {
-            const spec = subsetLabelSpec(filter, filtered.length);
+            // A lone chip filter names the subset by its state ("above range");
+            // combined with a search or a tag it falls back to the count.
+            const spec =
+              chipState !== undefined && !isOverviewFiltered(filter)
+                ? ({ kind: 'chip' } as const)
+                : subsetLabelSpec(filter, filtered.length);
             const label =
-              spec.kind === 'tag'
+              spec.kind === 'chip'
+                ? ctx.t(CHIP_LABEL_KEY[chipState as ChipState])
+                : spec.kind === 'tag'
                 ? tagLabel(spec.tag, ctx.t)
                 : plural(
                     spec.count,
@@ -261,7 +298,31 @@ export const overviewView: View = {
       // default (the card grid, everywhere — the list is an opt-in).
       let layout: OverviewLayout = settings.overviewLayout ?? defaultLayout();
 
-      container.append(renderSummaryChips(ctx, entries));
+      // What the traces of this paint pass are built from. The set itself is
+      // rebuilt per `renderContent`, because the shared time axis spans exactly
+      // the rows currently listed — filtering the list rescales it.
+      const traceInputs: TraceInputs = {
+        ctx,
+        measurements: data.measurements,
+        mode: sparkMode,
+        periodTo: asOf !== undefined ? endOfDayMs(asOf) : undefined,
+        nowMs: Date.parse(refIso),
+      };
+
+      // The chip row is above the content region, so a chip click repaints the
+      // row in place (to move the pressed state) and then only the content.
+      const chipHost = el('div', 'overview-chip-host');
+      const paintChips = (): void => {
+        chipHost.replaceChildren(
+          renderSummaryChips(ctx, entries, chipState, (next) => {
+            chipState = next;
+            paintChips();
+            renderContent();
+          }),
+        );
+      };
+      container.append(chipHost);
+      paintChips();
 
       if (hiddenWithData) {
         container.append(renderHiddenToggle(ctx, showHidden, (next) => {
@@ -282,14 +343,16 @@ export const overviewView: View = {
         // accent-soft highlight track the current filter without a full repaint).
         refreshSummary();
         contentHost.replaceChildren();
-        const filtered = filterOverviewEntries(entries, { query, activeTag });
+        const filtered = visibleEntries();
         if (filtered.length === 0) {
           contentHost.append(
             renderNoMatch(ctx, () => {
               query = '';
               activeTag = undefined;
+              chipState = undefined;
               searchInput.value = '';
               paintTagChips();
+              paintChips();
               renderContent();
             }),
           );
@@ -304,8 +367,12 @@ export const overviewView: View = {
         // on. Toggling watched changes grouping/chips, so it triggers a full
         // repaint (rebuilds entries from the mutated catalog).
         const watch: WatchOpts = { enabled: useTags, onToggle: paint };
-        if (layout === 'list') renderListLayout(ctx, contentHost, groups, useTags, watch);
-        else renderGridLayout(ctx, contentHost, groups, watch);
+        if (layout === 'list') {
+          // One domain for every listed row, so a date sits at the same x on
+          // each of them and one axis strip dates them all.
+          const traces = buildTraceSet(traceInputs, filtered.map((e) => e.metric));
+          renderListLayout(ctx, contentHost, groups, watch, traces);
+        } else renderGridLayout(ctx, contentHost, groups, watch);
       };
 
       // Layout toggle (grid / list), added to the header actions.
@@ -334,13 +401,58 @@ export const overviewView: View = {
             d.settings.overviewLayout = opt.layout;
           });
           updateToggle();
+          updateSparkToggle();
           renderContent();
         });
         toggleBtns.push({ layout: opt.layout, btn });
         toggle.append(btn);
       }
+
+      // Trace mode (Hidden / Out of range / All) — a list-only affordance, so it
+      // is revealed with the list and hidden again with the tiles.
+      const sparkWrap = el('div', 'overview-spark-control');
+      const sparkLabel = el('span', 'overview-spark-label muted');
+      sparkLabel.textContent = ctx.t('overview.sparkline');
+      const sparkSeg = el('div', 'seg overview-spark-toggle');
+      sparkSeg.setAttribute('role', 'group');
+      sparkSeg.setAttribute('aria-label', ctx.t('overview.sparkline'));
+      sparkWrap.append(sparkLabel, sparkSeg);
+      const sparkBtns: { mode: SparklineMode; btn: HTMLButtonElement }[] = [];
+      const sparkOptions: { mode: SparklineMode; key: StringKey }[] = [
+        { mode: 'hidden', key: 'overview.sparklineHidden' },
+        { mode: 'outliers', key: 'overview.sparklineOutliers' },
+        { mode: 'all', key: 'overview.sparklineAll' },
+      ];
+      const updateSparkToggle = (): void => {
+        sparkWrap.hidden = layout !== 'list';
+        for (const { mode, btn } of sparkBtns) {
+          const on = mode === sparkMode;
+          btn.classList.toggle('seg-btn--active', on);
+          btn.setAttribute('aria-pressed', String(on));
+        }
+      };
+      for (const opt of sparkOptions) {
+        const btn = el('button', 'seg-btn seg-btn--text') as HTMLButtonElement;
+        btn.type = 'button';
+        btn.textContent = ctx.t(opt.key);
+        btn.addEventListener('click', () => {
+          if (sparkMode === opt.mode) return;
+          sparkMode = opt.mode;
+          traceInputs.mode = opt.mode;
+          ctx.mutate((d) => {
+            d.settings.overviewSparkline = opt.mode;
+          });
+          updateSparkToggle();
+          renderContent();
+        });
+        sparkBtns.push({ mode: opt.mode, btn });
+        sparkSeg.append(btn);
+      }
+
       updateToggle();
       actions.prepend(toggle);
+      toggle.after(sparkWrap);
+      updateSparkToggle();
 
       // Filter row: a pill search plus (when tags are on) the tag chips.
       const filterRow = el('div', 'overview-filter');
@@ -449,14 +561,26 @@ function renderListLayout(
   ctx: AppContext,
   host: HTMLElement,
   groups: { tag: string | null; entries: CardEntry[] }[],
-  useTags: boolean,
   watch: WatchOpts,
+  traces: TraceSet,
 ): void {
-  void useTags; // the list row no longer shows a per-row tag chip (redundant)
   for (const group of groups) {
     const listCard = el('div', 'overview-list');
     listCard.append(listHeader(ctx));
-    for (const entry of group.entries) listCard.append(listRow(ctx, entry, watch));
+    let drewTrace = false;
+    for (const entry of group.entries) {
+      const row = listRow(ctx, entry, watch, traces);
+      if (row.classList.contains('overview-row--spark')) drewTrace = true;
+      listCard.append(row);
+    }
+    // The axis is repeated per list card rather than once at the bottom: the
+    // groups share the domain, and a strip right under the traces it dates
+    // beats one scrolled far away from them.
+    if (drewTrace) {
+      const axis = el('div', 'overview-spark-axis');
+      axis.append(traceAxis(traces));
+      listCard.append(axis);
+    }
     if (group.tag === null) {
       host.append(listCard);
     } else {
@@ -515,7 +639,12 @@ function listHeader(ctx: AppContext): HTMLElement {
  * the clickable `.overview-row` button plus, when tags are on, the star toggle as
  * its FIRST element (a sibling of the button, never nested inside it).
  */
-function listRow(ctx: AppContext, entry: CardEntry, watch: WatchOpts): HTMLElement {
+function listRow(
+  ctx: AppContext,
+  entry: CardEntry,
+  watch: WatchOpts,
+  traces: TraceSet,
+): HTMLElement {
   const { metric, model } = entry;
   const row = document.createElement('button');
   row.type = 'button';
@@ -570,6 +699,13 @@ function listRow(ctx: AppContext, entry: CardEntry, watch: WatchOpts): HTMLEleme
   statusCell.append(statusPill(ctx, model.rangeState));
 
   row.append(metricCell, valueCell, rangeCell, changeCell, ageCell, statusCell);
+
+  // The trend trace, when this row's history and the current mode call for one.
+  const trace = traces.get(entry.metric.id);
+  if (trace !== undefined) {
+    row.classList.add('overview-row--spark');
+    row.append(traceRow(ctx, trace));
+  }
   return row;
 }
 
@@ -832,7 +968,7 @@ function unitSpan(text: string): HTMLElement {
 }
 
 function unitDisplay(ctx: AppContext, code: string): string {
-  return ctx.units.getUnit(code)?.display ?? code;
+  return unitLabel(ctx.units, code, ctx.t);
 }
 
 /**
@@ -882,6 +1018,15 @@ function rangeTint(state: RangeState): string {
   if (state === 'below') return 'below';
   if (state === 'in-range') return 'ok';
   return 'muted';
+}
+
+// --- Row trend trace (list layout only) -------------------------------------
+
+/** Turn the trace data into the row's second line. */
+function traceRow(ctx: AppContext, data: TraceData): HTMLElement {
+  const row = buildTraceRow(ctx, data);
+  row.classList.add('overview-row-spark');
+  return row;
 }
 
 // --- Sparkline ------------------------------------------------------------
@@ -961,35 +1106,61 @@ function rangeText(refLow: number | undefined, refHigh: number | undefined): str
 
 // --- Summary chips --------------------------------------------------------
 
-/** Counts of in-range / above / below / without-range metrics as soft pills. */
-function renderSummaryChips(ctx: AppContext, entries: CardEntry[]): HTMLElement {
-  let inRange = 0;
-  let above = 0;
-  let below = 0;
-  let noRange = 0;
+/** The range state a summary chip counts — and filters the list down to. */
+type ChipState = 'in-range' | 'above' | 'below' | 'unknown';
+
+/** Name of the state a chip filters by, used to title the printed subset. */
+const CHIP_LABEL_KEY: Record<ChipState, StringKey> = {
+  'in-range': 'range.within',
+  above: 'range.above',
+  below: 'range.below',
+  unknown: 'range.none',
+};
+
+/**
+ * Counts of in-range / above / below / without-range metrics as soft pills —
+ * and, on click, the quickest filter in the app: "show me just those five".
+ * The counts always come from the UNFILTERED set, so picking a chip never
+ * rewrites the numbers next to it; clicking the active chip clears the filter.
+ */
+function renderSummaryChips(
+  ctx: AppContext,
+  entries: CardEntry[],
+  active: ChipState | undefined,
+  onPick: (state: ChipState | undefined) => void,
+): HTMLElement {
+  const counts: Record<ChipState, number> = { 'in-range': 0, above: 0, below: 0, unknown: 0 };
   for (const { model } of entries) {
     if (model === undefined) continue; // empty at the reference date
-    if (model.rangeState === 'in-range') inRange += 1;
-    else if (model.rangeState === 'above') above += 1;
-    else if (model.rangeState === 'below') below += 1;
-    else noRange += 1;
+    const state = model.rangeState;
+    counts[state === 'in-range' || state === 'above' || state === 'below' ? state : 'unknown'] += 1;
   }
 
   const row = el('div', 'overview-chips');
-  if (inRange > 0) row.append(chip('ok', ctx.t('overview.chip.inRange', { count: inRange }), true));
-  if (above > 0) row.append(chip('above', ctx.t('overview.chip.above', { count: above }), true));
-  if (below > 0) row.append(chip('below', ctx.t('overview.chip.below', { count: below }), true));
-  if (noRange > 0) row.append(chip('muted', ctx.t('overview.chip.noRange', { count: noRange }), false));
+  const add = (state: ChipState, tint: string, key: StringKey, dot: boolean): void => {
+    const count = counts[state];
+    if (count === 0) return;
+    const btn = chip(tint, ctx.t(key, { count }), dot, state === active);
+    btn.addEventListener('click', () => onPick(state === active ? undefined : state));
+    row.append(btn);
+  };
+  add('in-range', 'ok', 'overview.chip.inRange', true);
+  add('above', 'above', 'overview.chip.above', true);
+  add('below', 'below', 'overview.chip.below', true);
+  add('unknown', 'muted', 'overview.chip.noRange', false);
   return row;
 }
 
-function chip(tint: string, text: string, dot: boolean): HTMLElement {
-  const span = el('span', `overview-chip ${tint}`);
-  if (dot) span.append(el('span', 'chip-dot'));
+function chip(tint: string, text: string, dot: boolean, active: boolean): HTMLButtonElement {
+  const btn = el('button', `overview-chip ${tint}`) as HTMLButtonElement;
+  btn.type = 'button';
+  btn.setAttribute('aria-pressed', String(active));
+  btn.classList.toggle('is-active', active);
+  if (dot) btn.append(el('span', 'chip-dot'));
   const label = document.createElement('span');
   label.textContent = text;
-  span.append(label);
-  return span;
+  btn.append(label);
+  return btn;
 }
 
 /** Localized weekday + day + month, e.g. "úterý 21. července". */

@@ -80,6 +80,53 @@ describe('ImportPipeline.prepare', () => {
     expect(item.resolvedMetricId).toBe('builtin:hemoglobin');
   });
 
+  it('offers the candidate units canonical-first when the file stated none', () => {
+    const proposals: ProposedMeasurement[] = [
+      { metric: { unresolvedName: 'Folát' }, value: 12.3, confidence: 'medium' },
+    ];
+    const [item] = pipeline.prepare(proposals, { catalog });
+    expect(item.resolvedMetricId).toBe('builtin:folate');
+    // The catalog's canonical unit leads — a fact about the catalog, not a
+    // preselection: nothing is chosen and the row stays blocked either way.
+    expect(item.unitChoices?.[0]).toBe('nmol/L');
+    expect(item.unitChoices).toHaveLength(3);
+    expect(item.unitChoice).toBeUndefined();
+  });
+
+  it('asks for no unit when the candidates are the same unit under two names', () => {
+    const proposals: ProposedMeasurement[] = [
+      // Ferritin admits µg/L and ng/mL — 84 either way. A question whose answers
+      // are identical is friction, not a safeguard.
+      { metric: { unresolvedName: 'Ferritin' }, value: 84, confidence: 'medium' },
+    ];
+    const [item] = pipeline.prepare(proposals, { catalog });
+    expect(item.resolvedMetricId).toBe('builtin:ferritin');
+    expect(item.unitChoices).toBeUndefined();
+  });
+
+  it('asks for no unit when the value reads the same in every candidate unit', () => {
+    const proposals: ProposedMeasurement[] = [
+      // Normoblasts admit % and a bare ratio, which differ a hundredfold — but
+      // not at zero. A question whose answers all store the same number is
+      // friction, not a safeguard.
+      { metric: { unresolvedName: 'Normoblasty' }, value: 0, confidence: 'medium' },
+    ];
+    const [item] = pipeline.prepare(proposals, { catalog });
+    expect(item.resolvedMetricId).toBe('builtin:normoblasts');
+    expect(item.unitChoices).toBeUndefined();
+  });
+
+  it('asks for no unit on a qualitative result, even on a multi-unit metric', () => {
+    const proposals: ProposedMeasurement[] = [
+      // A Czech dipstick reads "negativní" — there is no number for a unit to
+      // apply to, so the row must not be held back asking for one.
+      { metric: { unresolvedName: 'Bílkovina v moči' }, textValue: 'negativní', confidence: 'medium' },
+    ];
+    const [item] = pipeline.prepare(proposals, { catalog });
+    expect(item.resolvedMetricId).toBe('builtin:urine-protein');
+    expect(item.unitChoices).toBeUndefined();
+  });
+
   it('treats a dangling metric id as unresolved (never guesses)', () => {
     const proposals: ProposedMeasurement[] = [
       { metric: 'builtin:does-not-exist' as MetricId, value: 1, confidence: 'high' },

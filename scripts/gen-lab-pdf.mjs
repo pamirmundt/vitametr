@@ -205,6 +205,91 @@ const HTML_FULL = `<!doctype html><html lang="cs"><head><meta charset="utf-8">
   </table>
 </body></html>`;
 
+// A Czech result sheet in the NČLP house style used by hospital and chain lab
+// information systems: two narrow code columns on the left, every analyte
+// prefixed with its tissue system (S_/P_/B_/U_/C_), a graphical in-range
+// "evaluation" bar on the right, and — the trap — the patient's DATE OF BIRTH
+// printed above the draw date. Several rows deliberately state no unit at all
+// (ratios and the computed index), which is how these sheets really look.
+// Fully synthetic: invented patient, invented lab, invented values.
+const HTML_NCLP = `<!doctype html><html lang="cs"><head><meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif; font-size: 10px; color: #000; padding: 18px; }
+  h1 { font-size: 14px; margin: 0 0 2px; }
+  .prov { font-size: 11px; font-weight: bold; margin-bottom: 2px; }
+  .meta { font-size: 9.5px; color: #222; margin-bottom: 8px; }
+  .meta div { margin: 1px 0; }
+  .sec { font-size: 10.5px; font-weight: bold; margin: 9px 0 2px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 1.5px 5px; }
+  th { border-bottom: 1px solid #000; font-size: 9px; }
+  .code { color: #444; width: 58px; }
+  .num { text-align: right; width: 62px; }
+  .unit { width: 74px; }
+  .ref { width: 92px; text-align: right; }
+  .bar { font-family: monospace; letter-spacing: 1px; width: 96px; }
+</style></head><body>
+  <div class="prov">Laboratoře Vzor — pracoviště VZR</div>
+  <h1>Výsledkový list</h1>
+  <div class="meta">
+    <div>k průvodce číslo: 260814/VZR/00001 Rutina</div>
+    <div>NOVÁK JAN &nbsp;&nbsp; Datum narození: 3.4.1979 &nbsp;&nbsp; Věk: 47 &nbsp;&nbsp; Pohlaví: M</div>
+    <div>Odběr: 14.08.2026 06:45 &nbsp;&nbsp; Přijato: 14.08.2026 06:52</div>
+  </div>
+
+  <div class="sec">Biochemie — krev</div>
+  <table>
+    <tr><th>Kód</th><th>Název vyšetření</th><th class="num">Výsledek</th><th class="unit">Jednotka</th><th class="ref">Meze</th><th class="bar">Hodnocení</th></tr>
+    <tr><td class="code">VZR AM</td><td>S_Kreatinin</td><td class="num">91</td><td class="unit">µmol/L</td><td class="ref">64 - 104</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>C_CKD-EPI 2021</td><td class="num">1,48</td><td class="unit">ml/s/1,73 m2</td><td class="ref">1,50 - 3,00</td><td class="bar">| |* | |</td></tr>
+    <tr><td class="code">VZR AM</td><td>S_Kyselina močová</td><td class="num">402</td><td class="unit">µmol/L</td><td class="ref">230 - 480</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>S_Na</td><td class="num">139</td><td class="unit">mmol/L</td><td class="ref">137 - 145</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>S_K</td><td class="num">4,1</td><td class="unit">mmol/L</td><td class="ref">3,5 - 5,1</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>S_Zn</td><td class="num">12,4</td><td class="unit">µmol/L</td><td class="ref">10,7 - 18,4</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>S_ALT</td><td class="num">0,55</td><td class="unit">µkat/L</td><td class="ref">0,17 - 1,17</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>C_FIB-4</td><td class="num">1,07</td><td class="unit"></td><td class="ref"></td><td class="bar"></td></tr>
+    <tr><td class="code">VZR AM</td><td>S_Cholesterol</td><td class="num">4,42</td><td class="unit">mmol/L</td><td class="ref">2,90 - 5,00</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>C_Non-HDL cholesterol</td><td class="num">3,0</td><td class="unit">mmol/L</td><td class="ref">0,0 - 3,8</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>S_Apo B</td><td class="num">0,88</td><td class="unit">g/L</td><td class="ref">0,50 - 1,00</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>S_hsCRP</td><td class="num">0,74</td><td class="unit">mg/L</td><td class="ref">0,00 - 3,00</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>S_25OH vitamin D</td><td class="num">88,5</td><td class="unit">nmol/L</td><td class="ref">75,0 - 250,0</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>S_Folát</td><td class="num">12,3</td><td class="unit"></td><td class="ref">7,0 - 46,0</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>S_TSH</td><td class="num">1,904</td><td class="unit">mU/L</td><td class="ref">0,550 - 4,780</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>P_Glukóza</td><td class="num">5,2</td><td class="unit">mmol/L</td><td class="ref">3,9 - 5,6</td><td class="bar">| |*| |</td></tr>
+  </table>
+
+  <div class="sec">Hematologie — krevní obraz</div>
+  <table>
+    <tr><th>Kód</th><th>Název vyšetření</th><th class="num">Výsledek</th><th class="unit">Jednotka</th><th class="ref">Meze</th><th class="bar">Hodnocení</th></tr>
+    <tr><td class="code">VZR AM</td><td>B_Leukocyty</td><td class="num">7,2</td><td class="unit">10^9/L</td><td class="ref">4,0 - 10,0</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>B_Erytrocyty</td><td class="num">5,01</td><td class="unit">10^12/L</td><td class="ref">4,00 - 5,80</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>B_Hemoglobin</td><td class="num">152</td><td class="unit">g/L</td><td class="ref">135 - 175</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>B_Hematokrit</td><td class="num">0,451</td><td class="unit"></td><td class="ref">0,400 - 0,500</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>B_MCV</td><td class="num">90,0</td><td class="unit">fl</td><td class="ref">82,0 - 98,0</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>B_PDW</td><td class="num">15,1</td><td class="unit">fl</td><td class="ref">9,0 - 17,0</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>B_Normoblasty</td><td class="num">0,000</td><td class="unit"></td><td class="ref">0,000 - 0,001</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>B_Normoblasty abs. počet</td><td class="num">0,000</td><td class="unit">10^9/L</td><td class="ref">0,000 - 0,015</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>B_Neutrofily</td><td class="num">0,551</td><td class="unit"></td><td class="ref">0,450 - 0,700</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>B_Neutrofily abs. počet</td><td class="num">3,97</td><td class="unit">10^9/L</td><td class="ref">2,00 - 7,00</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>B_Lymfocyty abs. počet</td><td class="num">2,31</td><td class="unit">10^9/L</td><td class="ref">0,80 - 4,00</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR AM</td><td>B_Monocyty abs. počet</td><td class="num">0,62</td><td class="unit">10^9/L</td><td class="ref">0,08 - 1,20</td><td class="bar">| |*| |</td></tr>
+    <tr><td class="code">VZR</td><td>B_Nezralé granulocyty abs.počet</td><td class="num">0,021</td><td class="unit">10^9/L</td><td class="ref">0,000 - 0,060</td><td class="bar">| |*| |</td></tr>
+  </table>
+
+  <div class="sec">Moč — chemicky</div>
+  <table>
+    <tr><th>Kód</th><th>Název vyšetření</th><th class="num">Výsledek</th><th class="unit">Jednotka</th><th class="ref">Meze</th><th class="bar">Hodnocení</th></tr>
+    <tr><td class="code">VZR</td><td>U_Glukóza</td><td class="num">negativní</td><td class="unit"></td><td class="ref">negativní</td><td class="bar"></td></tr>
+    <tr><td class="code">VZR</td><td>U_pH</td><td class="num">6,0</td><td class="unit">pH</td><td class="ref">5,0 - 6,5</td><td class="bar">| |*| |</td></tr>
+  </table>
+
+  <div style="margin-top:10px; font-size:8.5px; color:#333">
+    AM = metoda v rozsahu akreditace. Legenda tkáňového systému: S_sérum, P_plazma, B_krev,
+    U_moč, dU_odpad v moči, F_stolice, Pu_punktát.<br>
+    Sestaveno a vydáno: 14. 08. 2026 12:18
+  </div>
+</body></html>`;
+
 async function main() {
   mkdirSync('test/fixtures', { recursive: true });
   const browser = await chromium.launch();
@@ -225,10 +310,15 @@ async function main() {
     await page.pdf({ path: 'test/fixtures/labs/cz/lab-cs-praktik.pdf', ...pdfOpts });
     await page.setContent(HTML_FULL, { waitUntil: 'load' });
     await page.pdf({ path: 'test/fixtures/labs/cz/lab-cs-full.pdf', ...pdfOpts });
+    await page.setContent(HTML_NCLP, { waitUntil: 'load' });
+    await page.pdf({ path: 'test/fixtures/labs/cz/lab-cs-nclp.pdf', ...pdfOpts });
   } finally {
     await browser.close();
   }
-  console.log('Wrote lab-cs-result.pdf, lab-cs-synlab.pdf, lab-en-chemistry.pdf, lab-cs-praktik.pdf, lab-cs-full.pdf');
+  console.log(
+    'Wrote lab-cs-result.pdf, lab-cs-synlab.pdf, lab-en-chemistry.pdf, lab-cs-praktik.pdf, ' +
+      'lab-cs-full.pdf, lab-cs-nclp.pdf',
+  );
 }
 
 main().catch((e) => {

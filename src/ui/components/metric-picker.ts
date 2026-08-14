@@ -16,6 +16,7 @@
 import type { AppContext } from '../app-context';
 import type { Metric } from '../../core/types';
 import { filterMetrics, resolveMetricSelection } from '../views/entry-model';
+import { unitLabel } from '../format-value';
 import './metric-picker.css';
 
 export interface MetricPickerOptions {
@@ -54,10 +55,10 @@ export interface MetricPicker {
 }
 
 /** Display unit for a metric's canonical unit, or undefined when it has none. */
-function unitLabel(ctx: AppContext, metric: Metric): string | undefined {
+function metricUnit(ctx: AppContext, metric: Metric): string | undefined {
   const code = metric.canonicalUnit;
   if (!code) return undefined;
-  return ctx.units.getUnit(code)?.display ?? code;
+  return unitLabel(ctx.units, code, ctx.t);
 }
 
 export function metricPicker(opts: MetricPickerOptions): MetricPicker {
@@ -90,7 +91,7 @@ export function metricPicker(opts: MetricPickerOptions): MetricPicker {
       label.textContent = metricName(metric);
       btn.append(label);
       if (opts.showUnit) {
-        const unit = unitLabel(ctx, metric);
+        const unit = metricUnit(ctx, metric);
         if (unit) {
           const u = document.createElement('span');
           u.className = 'metric-suggestion-unit muted';

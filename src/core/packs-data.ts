@@ -53,6 +53,9 @@ export const CORE_METRIC_KEYS: readonly string[] = [
   'osmolality', 'homocysteine', 'bilirubin-direct', 'transferrin', 'tibc', 'transferrin-saturation',
   'ft3', 'aslo', 'rheumatoid-factor', 'reticulocytes', 'esr', 'neutrophils', 'lymphocytes',
   'monocytes', 'eosinophils', 'basophils', 'urine-erythrocytes', 'urine-leukocytes',
+  'neutrophils-absolute', 'lymphocytes-absolute', 'monocytes-absolute', 'eosinophils-absolute',
+  'basophils-absolute', 'pdw', 'normoblasts', 'normoblasts-absolute', 'immature-granulocytes',
+  'immature-granulocytes-absolute',
 ];
 
 const CORE_KEY_SET = new Set<string>(CORE_METRIC_KEYS);

@@ -368,3 +368,116 @@ describe('parseLabLines — SYNLAB metric mis-resolution regressions', () => {
     expect(p.unit).toBe('mg/dL');
   });
 });
+
+/**
+ * A result sheet in the national (NČLP) layout: code columns on the left, a
+ * tissue-system prefix on every analyte name, a graphical evaluation column on
+ * the right, and the patient's birth date printed above the draw date.
+ */
+describe('parseLabLines — national-convention result sheet', () => {
+  const first = (line: string) => parseLabLines([line], catalog())[0];
+
+  it('takes the labelled draw date, not the birth date printed above it', () => {
+    const p = parseLabLines(
+      [
+        'Pacient: Novák Jan, datum narození: 20.05.1975',
+        'Odběr: 14.08.2026 06:45',
+        'VZR AM S_Kreatinin 78 umol/l 64 - 104',
+      ],
+      catalog(),
+    );
+    expect(p).toHaveLength(1);
+    expect(p[0].takenAt?.startsWith('2026-08-14')).toBe(true);
+  });
+
+  it('falls back to the first date that is not a birth date or a print stamp', () => {
+    const p = parseLabLines(
+      ['Nar. 20.05.1975', 'Vytištěno 20.08.2026', 'Datum: 14.08.2026', 'S_Kreatinin 78 umol/l'],
+      catalog(),
+    );
+    expect(p[0].takenAt?.startsWith('2026-08-14')).toBe(true);
+  });
+
+  it('drops the left code columns and the tissue-system prefix', () => {
+    const p = first('VZR AM S_Kreatinin 78 umol/l 64 - 104');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:creatinine' as MetricId);
+    expect(p.value).toBeCloseTo(78, CLOSE);
+    expect(p.refLow).toBeCloseTo(64, CLOSE);
+  });
+
+  it('keeps the reference range despite the trailing evaluation column', () => {
+    const p = first('VZR S_Glukóza 5,4 mmol/l 3,9 - 5,6 | |*| |');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:glucose' as MetricId);
+    expect(p.value).toBeCloseTo(5.4, CLOSE);
+    expect(p.refLow).toBeCloseTo(3.9, CLOSE);
+    expect(p.refHigh).toBeCloseTo(5.6, CLOSE);
+    // The row is stored exactly as it was printed.
+    expect(p.rawText).toBe('VZR S_Glukóza 5,4 mmol/l 3,9 - 5,6 | |*| |');
+  });
+
+  it('routes a urine-prefixed analyte to the urine metric, not the blood one', () => {
+    const p = first('U_Glukóza negativní');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:urine-glucose' as MetricId);
+    expect(p.metric).not.toEqual('builtin:glucose' as MetricId);
+  });
+
+  it('does not silently move a urine analyte onto its blood namesake', () => {
+    // No urine metric exists under this name — the row goes to review under its
+    // bare name, never onto a same-named blood metric.
+    const p = first('dU_Nějaký analyt 1,2 mmol/l');
+    expect(p).toBeDefined();
+    expect(p.metric).toEqual({ unresolvedName: 'Nějaký analyt' });
+    expect(p.confidence).toBe('low');
+  });
+
+  it('accepts the mU/L spelling of the milli-international-unit concentration', () => {
+    const p = first('S_TSH 2,10 mU/l 0,27 - 4,20');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:tsh' as MetricId);
+    expect(p.unit).toBe('m[IU]/L');
+    expect(p.value).toBeCloseTo(2.1, CLOSE);
+  });
+
+  it('accepts the capital-I misprint of mU/l', () => {
+    const p = first('S_TSH 2,10 mU/I 0,27 - 4,20');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:tsh' as MetricId);
+    expect(p.unit).toBe('m[IU]/L');
+  });
+
+  it('keeps a unitless row when the metric has exactly one unit', () => {
+    const p = first('C_FIB-4 1,23');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:fib-4' as MetricId);
+    expect(p.value).toBeCloseTo(1.23, CLOSE);
+    // The row carries no unit and the parser invents none; normalization fills
+    // in the metric's canonical unit, which here is its only unit.
+    expect(p.unit).toBeUndefined();
+  });
+
+  it('never guesses the unit of a unitless row on a multi-unit metric', () => {
+    // Hematocrit takes both L/L and % — "0,466" is either 0,466 L/L or 0,466 %, a
+    // hundredfold difference. The row is kept (the metric IS identified) but the
+    // parser states no unit; the pipeline then blocks it until the user picks one.
+    const p = first('B_Hematokrit 0,466');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:hematocrit' as MetricId);
+    expect(p.value).toBeCloseTo(0.466, CLOSE);
+    expect(p.unit).toBeUndefined();
+  });
+
+  it('resolves a name whose only difference from the alias is punctuation', () => {
+    const p = first('S_25OH vitamin D 62 nmol/l 75 - 200');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:vitamin-d' as MetricId);
+  });
+
+  it('resolves a calculated value whose name carries the method year', () => {
+    const p = first('C_CKD-EPI 2021 1,45 ml/s/1,73m2');
+    expect(p).toBeDefined();
+    expect(p.metric).toBe('builtin:egfr' as MetricId);
+  });
+});

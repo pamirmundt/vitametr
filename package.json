@@ -1,6 +1,6 @@
 {
   "name": "vitametr",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Offline-first PWA for tracking personal health measurements over time",
   "author": "Milan Víšek",
   "license": "MPL-2.0",

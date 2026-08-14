@@ -27,15 +27,19 @@ import './review.css';
 import type { ReviewItem } from '../../core/contracts';
 import type { Metric, ProposedMeasurement, TimePrecision } from '../../core/types';
 import {
+  buildMetricHistory,
   bulkDecideUndecided,
   canAccept,
   canCommit,
   groupConflictsByMetric,
   hiddenPackCounts,
   isResolved,
+  needsUnit,
   suggestMetrics,
+  summarize,
   toCommitList,
   type MetricConflictGroup,
+  type MetricSuggestion,
 } from './review-model';
 import { metricPicker } from '../components/metric-picker';
 import { getOfferHiddenMetrics } from './import-actions';
@@ -58,7 +62,7 @@ import {
   type ConflictKind,
 } from '../../core/conflicts';
 import type { Measurement, MetricId, Operator, Source } from '../../core/types';
-import { valueWithUnitEl } from '../format-value';
+import { unitLabel, valueWithUnitEl } from '../format-value';
 
 /**
  * Origin plugin id stamped on committed measurements. `ProposedMeasurement`
@@ -106,11 +110,12 @@ let pendingCreatedMetricIds = new Set<MetricId>();
  * 'review'. Side-effect-local to this module by design (file header).
  */
 export function setPendingImport(items: ReviewItem[], meta: PendingImportMeta = {}): void {
-  // Default a resolved row to accept once, now — not on every render — so the
-  // stored decision survives navigation. A fresh batch starts with no choices.
+  // Default an acceptable row to accept once, now — not on every render — so the
+  // stored decision survives navigation. A row still waiting for its unit is NOT
+  // defaulted: it is not importable yet. A fresh batch starts with no choices.
   pendingItems = items.map((item) => ({
     ...item,
-    decision: isResolved(item) && item.decision === 'pending' ? 'accept' : item.decision,
+    decision: canAccept(item) && item.decision === 'pending' ? 'accept' : item.decision,
   }));
   pendingMeta = meta;
   pendingChoices = new Map();
@@ -356,14 +361,44 @@ export const reviewView: View = {
     });
     commitWrap.append(countPill, commitBtn);
 
-    footer.append(commitWrap);
+    // How many rows the bulk action will leave behind because they are still
+    // waiting for the user to say which unit their value is in. It sits with the
+    // import button, not under it — it explains that button's count — and comes
+    // with a way there: at thirty rows "3 rows are waiting" is otherwise a riddle.
+    const awaitingBox = el('div', 'review-awaiting');
+    const awaitingUnitNote = el('span', 'review-awaiting-unit');
+    const awaitingJump = button('review-awaiting-jump', ctx.t('review.awaitingUnitJump'));
+    awaitingJump.addEventListener('click', () => {
+      const first = state.findIndex((it) => needsUnit(it));
+      if (first < 0) return;
+      const target = rows[first].element;
+      target.scrollIntoView({ block: 'center' });
+      const option = target.querySelector<HTMLElement>('.review-unit-option');
+      option?.focus();
+    });
+    awaitingBox.append(awaitingUnitNote, awaitingJump);
+
+    footer.append(commitWrap, awaitingBox);
 
     container.append(subtitle, conflictsSection, bannersSection, list, sourceControl, footer);
 
     function updateFooter(): void {
-      const committable = toCommitList(state).length;
-      countPill.textContent = formatNumber(committable);
+      const summary = summarize(state);
+      countPill.textContent = formatNumber(toCommitList(state).length);
       commitBtn.disabled = !canCommit(state);
+      awaitingUnitNote.textContent =
+        summary.awaitingUnit > 0
+          ? plural(
+              summary.awaitingUnit,
+              {
+                one: 'review.awaitingUnitOne',
+                few: 'review.awaitingUnitFew',
+                many: 'review.awaitingUnitMany',
+              },
+              { n: summary.awaitingUnit },
+            )
+          : '';
+      awaitingBox.hidden = summary.awaitingUnit === 0;
       renderConflicts();
     }
 
@@ -444,6 +479,16 @@ function buildRow(
         return;
       }
       element.classList.remove('review-item--hidden-pack');
+      // The file stated no unit and the metric admits several — the value means
+      // nothing until the user says which one it is in. The chooser stays on the
+      // row after the choice too, so a misclick is one tap away from being fixed.
+      element.classList.toggle('review-item--needs-unit', needsUnit(item));
+      if ((item.unitChoices?.length ?? 0) > 0 && p.unit === undefined) {
+        element.append(buildUnitChoice(ctx, state, index, refresh, onChange));
+      }
+      // A row still waiting for its unit cannot be accepted (spec §16), so it
+      // gets no accept/reject toggle until the choice is made.
+      if (needsUnit(item)) return;
       element.append(buildAcceptReject(ctx, state, index, onChange));
       // A row that was originally unresolved and has now been assigned: offer a way
       // back (a misclick must be reversible), and promise the mapping is learned on
@@ -511,10 +556,332 @@ function buildAcceptReject(
 }
 
 /**
+ * "The lab stated no unit" state for a resolved numeric row whose metric admits
+ * several units (spec §16 — the app never guesses between `%` and a plain ratio,
+ * a hundredfold difference). One option per candidate unit, each showing what the
+ * value would actually mean, and under it the user's OWN past values converted to
+ * that unit: `0,451 l/l` over `your values 0,40–0,48` decides at a glance, without
+ * the app ever claiming what is normal. Until one is picked the row carries no
+ * accept/reject toggle and stays out of the import.
+ *
+ * A radiogroup, not toggles: the candidates are a closed set and exactly one is
+ * true, so there is no "none of them" to toggle back to.
+ */
+function buildUnitChoice(
+  ctx: AppContext,
+  state: ReviewItem[],
+  index: number,
+  refresh: () => void,
+  onChange: () => void,
+): HTMLElement {
+  const wrap = el('div', 'review-unit-choice');
+  const item = state[index];
+  const p = item.proposed;
+  const metric = ctx.catalog().byId(item.resolvedMetricId!);
+  const choices = item.unitChoices ?? [];
+  const history = metric ? buildMetricHistory(ctx.data()).get(metric.id) : undefined;
+
+  // The chooser stays on the row after the choice (so a misclick is one tap from
+  // fixed), but the "unit missing" badge and its explanation must not: the unit
+  // is no longer missing, and a stale warning is a warning nobody reads.
+  if (item.unitChoice === undefined) {
+    const badge = el('span', 'pill review-unit-missing');
+    badge.textContent = ctx.t('review.unitMissing');
+    const hint = el('p', 'muted review-unit-hint');
+    hint.textContent = ctx.t('review.unitMissingHint');
+    wrap.append(badge, hint);
+  }
+
+  const unitDisplay = (code: string): string => unitLabel(ctx.units, code, ctx.t);
+  /** Stable across the re-render, so keyboard focus can be put back after it. */
+  const optionId = (i: number): string => `review-unit-${index}-${i}`;
+
+  // The span of the user's own readings for this metric — the reference range only
+  // when a single stored value makes min–max degenerate.
+  const spanLow = history && history.min !== history.max ? history.min : history?.refLow;
+  const spanHigh = history && history.min !== history.max ? history.max : history?.refHigh;
+
+  const options = el('div', 'review-unit-options');
+  options.setAttribute('role', 'radiogroup');
+  if (metric) {
+    options.setAttribute('aria-label', `${metricName(ctx, metric)} — ${ctx.t('entry.unit')}`);
+  }
+
+  function pick(code: string): void {
+    state[index].unitChoice = code;
+    state[index].decision = 'accept'; // a settled row defaults to accept
+    refresh();
+    onChange();
+    // The row was rebuilt underneath us; keep the keyboard where it was.
+    document.getElementById(optionId(choices.indexOf(code)))?.focus();
+  }
+
+  choices.forEach((code, i) => {
+    const option = button('review-unit-option', '');
+    const selected = item.unitChoice === code;
+    option.id = optionId(i);
+    option.setAttribute('role', 'radio');
+    option.setAttribute('aria-checked', String(selected));
+    // Roving tabindex: the group is one tab stop, arrows move inside it.
+    option.tabIndex = selected || (item.unitChoice === undefined && i === 0) ? 0 : -1;
+    option.classList.toggle('review-unit-option--selected', selected);
+    if (item.unitChoice !== undefined && !selected) {
+      option.classList.add('review-unit-option--dimmed');
+    }
+
+    const reading = el('span', 'review-unit-reading');
+    reading.textContent =
+      p.value !== undefined ? `${formatNumber(p.value)} ${unitDisplay(code)}` : unitDisplay(code);
+    if (history?.unit === code) {
+      const inUse = el('span', 'review-unit-inuse muted');
+      inUse.textContent = ctx.t('review.unitInUse');
+      reading.append(' ', inUse);
+    }
+    option.append(reading);
+
+    // The user's own values in THIS option's unit. Only one of the readings can
+    // land inside them, which is the whole decision — and they are his numbers,
+    // not a range this app calls normal.
+    const span = el('span', 'review-unit-history muted');
+    if (history && spanLow !== undefined) {
+      const low = ctx.units.convert(spanLow, history.unit, code, metric);
+      const high =
+        spanHigh === undefined ? undefined : ctx.units.convert(spanHigh, history.unit, code, metric);
+      if (low.ok && (high === undefined || high.ok)) {
+        const range = formatRange(low.value, high?.ok ? high.value : undefined);
+        if (range !== undefined) span.textContent = ctx.t('review.unitHistory', { range });
+      }
+    }
+    // Nothing of the user's own to show: fall back to what this option would mean
+    // elsewhere, so the two options differ by more than the unit's name. One
+    // conversion per option (never a matrix), on every option, so the readings
+    // stay symmetrical — and it yields to the history line, which is stronger.
+    if (span.textContent === '') {
+      const equiv = conversionHint(ctx, choices, code, p.value, metric);
+      if (equiv !== undefined) span.textContent = equiv;
+    }
+    option.append(span);
+
+    option.addEventListener('click', () => pick(code));
+    option.addEventListener('keydown', (event) => {
+      const key = (event as KeyboardEvent).key;
+      let next: number | undefined;
+      if (key === 'ArrowRight' || key === 'ArrowDown') next = (i + 1) % choices.length;
+      else if (key === 'ArrowLeft' || key === 'ArrowUp') next = (i - 1 + choices.length) % choices.length;
+      else if (key === 'Home') next = 0;
+      else if (key === 'End') next = choices.length - 1;
+      if (next === undefined) return;
+      event.preventDefault();
+      pick(choices[next]);
+    });
+    options.append(option);
+  });
+  wrap.append(options);
+
+  const footer = el('div', 'review-resolver-footer');
+  const rejectBtn = button('review-reject-item', ctx.t('review.rejectItem'));
+  rejectBtn.setAttribute('aria-pressed', String(item.decision === 'reject'));
+  rejectBtn.addEventListener('click', () => {
+    state[index].decision = state[index].decision === 'reject' ? 'pending' : 'reject';
+    refresh();
+    onChange();
+  });
+  footer.append(rejectBtn);
+  wrap.append(footer);
+
+  return wrap;
+}
+
+/**
+ * "= 45,1 %" — what the reading of one unit-choice option would be in another
+ * unit. The target is the metric's canonical unit, or (when the option IS the
+ * canonical one) the next candidate: exactly one conversion per option, so four
+ * candidates stay four single lines rather than a matrix. Rounded to the target
+ * unit's own precision — `0,00451`, not the float's tail.
+ */
+function conversionHint(
+  ctx: AppContext,
+  choices: readonly string[],
+  code: string,
+  value: number | undefined,
+  metric: Metric | undefined,
+): string | undefined {
+  if (value === undefined || metric === undefined) return undefined;
+  const target =
+    code === metric.canonicalUnit ? choices.find((c) => c !== code) : metric.canonicalUnit;
+  if (target === undefined) return undefined;
+  const converted = ctx.units.convert(value, code, target, metric);
+  if (!converted.ok) return undefined;
+  return ctx.t('review.unitEquals', {
+    value: formatNumber(converted.value, metric.precision?.[target]),
+    unit: unitLabel(ctx.units, target, ctx.t),
+  });
+}
+
+/** The unit a suggestion's series would be in: the stored one, else canonical. */
+function suggestionUnit(ctx: AppContext, suggestion: MetricSuggestion): string {
+  const code = suggestion.history?.unit ?? suggestion.metric.canonicalUnit;
+  return unitLabel(ctx.units, code, ctx.t);
+}
+
+/** "62–106", or the single bound when only one is known. */
+function formatRange(low: number | undefined, high: number | undefined): string | undefined {
+  if (low !== undefined && high !== undefined) {
+    return low === high ? formatNumber(low) : `${formatNumber(low)}–${formatNumber(high)}`;
+  }
+  const single = low ?? high;
+  return single === undefined ? undefined : formatNumber(single);
+}
+
+/**
+ * A marker interpolated in place of the number so the translated phrase can be
+ * split around it. NUL never occurs in the strings themselves, and splitting the
+ * rendered phrase (rather than assuming "word first") keeps word order in the
+ * translator's hands.
+ */
+const SLOT_MARK = '\u0000';
+
+/**
+ * One evidence slot of a suggestion card. The wording is quiet and the number
+ * carries the weight — the numbers are what get compared across cards. An empty
+ * slot is still rendered, so the same evidence always sits on the same line in
+ * every card of the row.
+ */
+function evidenceSlot(
+  ctx: AppContext,
+  key: StringKey,
+  param: string,
+  value: string | undefined,
+): HTMLElement {
+  const slot = el('span', 'review-suggest-evidence');
+  if (value === undefined) return slot; // keeps the grid row, shows nothing
+  const parts = ctx.t(key, { [param]: SLOT_MARK }).split(SLOT_MARK);
+  const number = el('span', 'review-suggest-value');
+  number.textContent = value;
+  for (const [i, part] of parts.entries()) {
+    if (i > 0) slot.append(number.cloneNode(true));
+    if (part === '') continue;
+    const word = el('span', 'review-suggest-word');
+    word.textContent = part;
+    slot.append(word);
+  }
+  return slot;
+}
+
+/** An evidence slot holding a bare number (no surrounding wording). */
+function plainSlot(value: string | undefined): HTMLElement {
+  const slot = el('span', 'review-suggest-evidence');
+  if (value === undefined) return slot;
+  const number = el('span', 'review-suggest-value');
+  number.textContent = value;
+  slot.append(number);
+  return slot;
+}
+
+/**
+ * One suggestion as a tappable card carrying its evidence, on FIXED rows:
+ * name · unit · range · last value · provenance. Every card in the row uses the
+ * same five slots, so "range" in one card sits beside "range" in the next — that
+ * alignment is the whole point, since the decision is made on the numbers.
+ *
+ * The numbers are the user's OWN history, never a range this app claims to be
+ * normal: no in-range/out-of-range styling here, deliberately (no medical
+ * claims). Nothing marks a history-backed card either — a card showing a range
+ * and a last value visibly rests on the user's data, and it already ranks first.
+ *
+ * `withHistory` is decided for the whole row, not per card: when no candidate
+ * has history the three history slots are dropped everywhere (a fresh profile
+ * gets short cards, not tall empty ones), and when any candidate has them every
+ * card keeps them — empty where there is nothing, so the lines stay aligned.
+ */
+function buildSuggestionCard(
+  ctx: AppContext,
+  suggestion: MetricSuggestion,
+  assign: (metric: Metric) => void,
+  withHistory: boolean,
+): HTMLElement {
+  const { metric, history } = suggestion;
+  const card = button('review-suggest-card', '');
+  card.addEventListener('click', () => assign(metric));
+
+  // Screen readers get the action; the visible text stays pure evidence.
+  const action = el('span', 'visually-hidden');
+  action.textContent = `${ctx.t('review.assign')} `;
+  const name = el('span', 'review-suggest-name');
+  name.textContent = metricName(ctx, metric);
+  name.prepend(action);
+  card.append(name);
+
+  card.append(plainSlot(suggestionUnit(ctx, suggestion) || undefined));
+  if (!withHistory) return card;
+  card.append(
+    evidenceSlot(
+      ctx,
+      'review.evidenceRef',
+      'range',
+      history ? formatRange(history.refLow, history.refHigh) : undefined,
+    ),
+  );
+  card.append(
+    evidenceSlot(
+      ctx,
+      'review.evidenceLast',
+      'value',
+      history ? formatNumber(history.lastValue) : undefined,
+    ),
+  );
+
+  const provenance = el('span', 'review-suggest-provenance muted');
+  if (history) {
+    const sourceName = history.lastSourceId
+      ? ctx.data().sources.find((s) => s.id === history.lastSourceId)?.name
+      : undefined;
+    const text = [sourceName, formatDateTime(history.lastTakenAt, history.lastPrecision)]
+      .filter(Boolean)
+      .join(' · ');
+    provenance.textContent = text;
+    provenance.title = text; // the visible line is clipped to one row
+  }
+  card.append(provenance);
+
+  return card;
+}
+
+/**
+ * A runner-up suggestion, as a compact row under the two cards: name on the
+ * left, its unit and strongest number on the right. Three columns do not fit a
+ * phone, and a third candidate is worth one tap, not a third of the width.
+ */
+function buildSuggestionRow(
+  ctx: AppContext,
+  suggestion: MetricSuggestion,
+  assign: (metric: Metric) => void,
+): HTMLElement {
+  const { metric, history } = suggestion;
+  const row = button('review-suggest-row', '');
+  row.addEventListener('click', () => assign(metric));
+
+  const action = el('span', 'visually-hidden');
+  action.textContent = `${ctx.t('review.assign')} `;
+  const name = el('span', 'review-suggest-name');
+  name.textContent = metricName(ctx, metric);
+  name.prepend(action);
+
+  const meta = el('span', 'review-suggest-rowmeta muted');
+  const detail = history
+    ? ctx.t('review.evidenceLast', { value: formatNumber(history.lastValue) })
+    : ctx.t('review.suggestNoHistory');
+  meta.textContent = [suggestionUnit(ctx, suggestion), detail].filter(Boolean).join(' · ');
+
+  row.append(name, meta);
+  return row;
+}
+
+/**
  * Guided resolver for an unresolved row (spec §1): an "Unresolved" badge, up to
- * three intelligent suggestion chips (name + unit match), a search combobox
- * whose last row creates a metric from the raw name, and a single ghost "Reject
- * item". No always-expanded metric list, no competing "create" section.
+ * three intelligent suggestions (name + unit + your own history), a search
+ * combobox whose last row creates a metric from the raw name, and a single ghost
+ * "Reject item". No always-expanded metric list, no competing "create" section.
  */
 function buildResolver(
   ctx: AppContext,
@@ -570,24 +937,45 @@ function buildResolver(
     }
   }
 
-  // ---- Suggestions (0–3 chips) --------------------------------------------
-  const chips = suggestMetrics(rawName, p.unit, ctx.catalog().all(), ctx.units, (k) =>
-    ctx.t(k as StringKey),
+  // ---- Suggestions (0–3 cards, each carrying its evidence) ----------------
+  const suggestions = suggestMetrics(
+    {
+      name: rawName,
+      ...(p.unit !== undefined ? { unit: p.unit } : {}),
+      ...(p.value !== undefined ? { value: p.value } : {}),
+      ...(p.refLow !== undefined ? { refLow: p.refLow } : {}),
+      ...(p.refHigh !== undefined ? { refHigh: p.refHigh } : {}),
+    },
+    ctx.catalog().all(),
+    ctx.units,
+    (k: string) => ctx.t(k as StringKey),
+    buildMetricHistory(ctx.data()),
   );
-  if (chips.length > 0) {
+  if (suggestions.length > 0) {
     const suggestWrap = el('div', 'review-suggested');
     const label = el('span', 'review-field-label');
     label.textContent = ctx.t('review.suggested');
-    const row = el('div', 'review-suggest-chips');
-    const unitDisplay = p.unit ? (ctx.units.getUnit(p.unit)?.display ?? p.unit) : '';
-    for (const metric of chips) {
-      const unit = unitDisplay || (metric.canonicalUnit ? ctx.units.getUnit(metric.canonicalUnit)?.display ?? metric.canonicalUnit : '');
-      const text = unit ? `${metricName(ctx, metric)} · ${unit}` : metricName(ctx, metric);
-      const chip = button('tag-chip review-suggest-chip', text);
-      chip.addEventListener('click', () => assign(metric));
-      row.append(chip);
+    suggestWrap.append(label);
+
+    // The best two go side by side, sharing the container's rows so their
+    // evidence lines up (subgrid); anything below that is a compact row — three
+    // columns do not fit a phone, and comparing three sets of numbers at once is
+    // not what happens anyway.
+    const cards = el('div', 'review-suggest-cards');
+    const top = suggestions.slice(0, 2);
+    if (top.length === 1) cards.classList.add('review-suggest-cards--single');
+    // Empty slots would still claim height, so the container only spans the rows
+    // that carry something: on a fresh profile (no history) that is name + unit.
+    const anyHistory = top.some((s) => s.history !== undefined);
+    cards.style.setProperty('--evidence-rows', anyHistory ? '5' : '2');
+    for (const suggestion of top) {
+      cards.append(buildSuggestionCard(ctx, suggestion, assign, anyHistory));
     }
-    suggestWrap.append(label, row);
+    suggestWrap.append(cards);
+
+    for (const suggestion of suggestions.slice(2)) {
+      suggestWrap.append(buildSuggestionRow(ctx, suggestion, assign));
+    }
     wrap.append(suggestWrap);
   }
 
@@ -618,7 +1006,7 @@ function buildResolver(
     unitInput.className = 'review-create-unit';
     unitInput.placeholder = ctx.t('entry.unitOptional');
     unitInput.setAttribute('aria-label', ctx.t('entry.unitOptional'));
-    if (p.unit) unitInput.value = ctx.units.getUnit(p.unit)?.display ?? p.unit;
+    if (p.unit) unitInput.value = unitLabel(ctx.units, p.unit, ctx.t);
 
     const createBtn = button('review-create-btn', ctx.t('common.add'));
     createBtn.addEventListener('click', () => {
@@ -1176,7 +1564,7 @@ function conflictValueEl(ctx: AppContext, m: Measurement, emphasis: boolean): HT
     span.textContent = measurementText(m) ?? '';
     return span;
   }
-  const unit = m.unit ? ctx.units.getUnit(m.unit)?.display ?? m.unit : undefined;
+  const unit = m.unit ? unitLabel(ctx.units, m.unit, ctx.t) : undefined;
   return valueWithUnitEl({
     value: m.value,
     ...(unit ? { unit } : {}),
@@ -1309,7 +1697,7 @@ function readingEl(ctx: AppContext, p: ProposedMeasurement): HTMLElement {
     span.textContent = measurementText(p) ?? ''; // qualitative proposal
     return span;
   }
-  const unit = p.unit ? ctx.units.getUnit(p.unit)?.display ?? p.unit : undefined;
+  const unit = p.unit ? unitLabel(ctx.units, p.unit, ctx.t) : undefined;
   return valueWithUnitEl({
     value: p.value,
     ...(unit ? { unit } : {}),

@@ -22,8 +22,8 @@ function emptyProfile(): ProfileData {
 }
 
 describe('built-in seed data', () => {
-  it('ships the full seed (95 routine core + 31 compiled category-pack analytes = 126)', () => {
-    expect(BUILTIN_METRICS.length).toBe(126);
+  it('ships the full seed (105 routine core + 33 compiled category-pack analytes = 138)', () => {
+    expect(BUILTIN_METRICS.length).toBe(138);
   });
 
   it('has unique keys and matching builtin: ids', () => {

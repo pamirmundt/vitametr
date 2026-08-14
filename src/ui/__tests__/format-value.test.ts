@@ -6,7 +6,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { unitSegments, valueWithUnitText } from '../format-value';
+import { unitLabel, unitSegments, valueWithUnitText } from '../format-value';
+import { createUnitsEngine } from '../../core/units';
+import type { StringKey } from '../../i18n/index';
 
 /** Deterministic number formatting, independent of the ambient locale. */
 const raw = (v: number, decimals?: number): string =>
@@ -73,5 +75,27 @@ describe('valueWithUnitText', () => {
     expect(
       valueWithUnitText({ value: 1, operator: '<', unit: '10*9/L', markup: true, escape: esc, formatNumber: raw }),
     ).toBe('&lt; 1 10<sup>9</sup>/L');
+  });
+});
+
+describe('unitLabel', () => {
+  const units = createUnitsEngine();
+  /** Deterministic, locale-independent stand-in for the app translator. */
+  const t = ((key: string) => `t:${key}`) as unknown as (key: StringKey) => string;
+
+  it('prints the symbol the unit table carries', () => {
+    expect(unitLabel(units, 'mmol/L', t)).toBe('mmol/l');
+  });
+
+  it('prints a word for the bare ratio, which has no symbol ("0 1" is not a unit)', () => {
+    expect(unitLabel(units, '1', t)).toBe('t:unit.ratio');
+  });
+
+  it('falls back to the code itself for a unit the table does not know', () => {
+    expect(unitLabel(units, 'bananas', t)).toBe('bananas');
+  });
+
+  it('renders a missing unit as nothing at all', () => {
+    expect(unitLabel(units, undefined, t)).toBe('');
   });
 });

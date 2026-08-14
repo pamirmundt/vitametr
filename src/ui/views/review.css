@@ -93,10 +93,208 @@
 }
 .review-create-direct:hover { text-decoration: underline; }
 
-/* Suggestion chips (name + unit). */
+/* ---- Suggestion cards (name + the evidence behind it) ----
+   Each candidate is a small card: the metric name, the unit its series is in
+   and — when the user has measured it before — the source-stated range and the
+   last reading. The decision is made on the NUMBERS, so the two best candidates
+   sit in two equal columns (never a horizontal scroll: a card you have to swipe
+   to is a card you cannot compare) and every card shares the container's rows,
+   which puts "range" beside "range" and "last" beside "last". */
 .review-suggested { display: flex; flex-direction: column; gap: 6px; }
-.review-suggest-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.review-suggest-chip { cursor: pointer; }
+.review-suggest-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(var(--evidence-rows, 5), auto);
+  gap: 8px;
+}
+/* A lone candidate stays one column wide — it has nothing to be compared with. */
+.review-suggest-cards--single { grid-template-columns: 1fr; }
+.review-suggest-card {
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: span var(--evidence-rows, 5);
+  row-gap: 3px;
+  justify-items: start;
+  min-width: 0;
+  min-height: 44px;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.5em 0.7em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.review-suggest-card:hover { border-color: var(--accent); }
+.review-suggest-card:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  outline: none;
+}
+.review-suggest-card:active { background: var(--surface-2); }
+.review-suggest-name {
+  font-weight: 600;
+  line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* One evidence line. Empty ones are still rendered so the rows stay in step
+   across the cards; the fallback height keeps them in step without subgrid too. */
+.review-suggest-evidence {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  min-height: 1.35em;
+  min-width: 0;
+}
+/* Inside "range 62–106" the number carries the weight, the word only labels it. */
+.review-suggest-word { color: var(--text-muted); font-size: 0.75rem; }
+.review-suggest-value { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Weakest line of the card: one row, clipped, full text in the title attribute. */
+.review-suggest-provenance {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  min-height: 1.35em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Third candidate and beyond: one tap is still worth offering, a third of the
+   width is not. Nothing marks the history-backed cards apart — a card carrying a
+   range and a last reading visibly rests on the user's own data, and it ranks
+   first anyway. Deliberately no in-range/out-of-range colour anywhere here:
+   those numbers are the user's history, never a claim about what is normal. */
+.review-suggest-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.4em 0.7em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.review-suggest-row:hover { border-color: var(--accent); }
+.review-suggest-row:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  outline: none;
+}
+.review-suggest-rowmeta {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- "The lab stated no unit" state ---- */
+
+/* Two different states must not look the same while scrolling: a full --warn
+   border means "we cannot even name this row", a --warn line on the left means
+   "named row, one open decision". (The accent line is the hidden-pack marker.) */
+.review-item--needs-unit { border-left: 3px solid var(--warn); }
+
+.review-unit-choice {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.review-unit-missing { color: var(--warn); align-self: flex-start; }
+.review-unit-hint { margin: 0; font-size: 0.85rem; }
+
+/* Auto-fit keeps two options per phone row and three or four on a desktop
+   without a rule per count; the shared rows keep both readings on one line and
+   both history ranges on the next, which is what makes them comparable. */
+.review-unit-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  grid-template-rows: repeat(2, auto);
+  gap: 8px;
+}
+.review-unit-option {
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: span 2;
+  row-gap: 2px;
+  justify-items: start;
+  min-width: 0;
+  min-height: 44px;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.5em 0.7em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.review-unit-option:hover { border-color: var(--accent); }
+.review-unit-option:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  outline: none;
+}
+/* Picked: unmistakable at a glance — the row's remaining decision is settled. */
+.review-unit-option--selected {
+  border: 2px solid var(--accent);
+  padding: calc(0.5em - 1px) calc(0.7em - 1px);
+  background: var(--accent-soft);
+}
+.review-unit-option--selected .review-unit-reading::before {
+  content: '✓ ';
+  color: var(--accent);
+}
+.review-unit-option--dimmed { color: var(--text-muted); }
+.review-unit-option--dimmed .review-unit-reading { font-weight: 600; }
+/* The reading itself carries the decision — 0,466 L/L reads as a hematocrit,
+   0,466 % does not — so it is the loudest thing in the option. */
+.review-unit-reading {
+  font-size: 1.05rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+/* The user's own past values in this option's unit: only one of the readings can
+   land inside them. His numbers, not a range this app calls normal. */
+.review-unit-history {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  min-height: 1.35em;
+}
+.review-unit-inuse { font-size: 0.72rem; font-weight: 400; }
+
+/* Sits with the import button — it explains that button's count — and carries
+   the way there, because "3 rows are waiting" is useless at thirty rows. */
+.review-awaiting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-top: 6px;
+}
+.review-awaiting[hidden] { display: none; }
+.review-awaiting-unit { color: var(--warn); font-weight: 700; font-size: 0.85rem; }
+.review-awaiting-jump {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.review-awaiting-jump:hover { background: none; text-decoration: none; }
 
 /* Inline "create from raw name" quick-form (revealed from the combobox). */
 .review-create-host:empty { display: none; }

@@ -32,7 +32,7 @@ import {
 } from '../../ui/views/report-model.js';
 import { isSeededTag } from '../../core/tags.js';
 import { profileDisplayName } from '../../ui/views/settings-model.js';
-import { valueWithUnitText } from '../../ui/format-value.js';
+import { unitLabel, valueWithUnitText } from '../../ui/format-value.js';
 import { selectMeasurements } from './json-backup.js';
 
 const INTL_TAG: Record<'cs' | 'en', string> = { cs: 'cs-CZ', en: 'en-US' };
@@ -125,7 +125,7 @@ export const reportExportPlugin: ExportPlugin = {
 
     const valueText = (r: CellRow): string => {
       if (r.value === undefined) return esc(r.textValue ?? '');
-      const unit = ctx.units.getUnit(r.unit)?.display ?? r.unit;
+      const unit = unitLabel(ctx.units, r.unit, t);
       // Shared value+unit typography with <sup> powers (10⁹/l), the plugin's own
       // locale-pinned number formatter, and HTML escaping of literal parts.
       return valueWithUnitText({
@@ -152,11 +152,30 @@ export const reportExportPlugin: ExportPlugin = {
       return ` <span class="badge ${r.rangeState}">${esc(t(key))}</span>`;
     };
 
+    /** What a line adds beyond its group heading — never the state itself. */
     const attentionText = (item: AttentionItem): string => {
-      if (item.reason === 'out-of-range') return esc(t('report.outOfRange'));
+      if (item.reason === 'out-of-range') {
+        const also = item.count ? ` · ${t('report.alsoBefore', { count: item.count })}` : '';
+        return esc((item.lastIso ? rawDate(item.lastIso) : '') + also);
+      }
+      if (item.reason === 'past-out-of-range') {
+        return esc(
+          t('report.attentionPastLine', {
+            count: item.count ?? 0,
+            date: item.lastIso ? rawDate(item.lastIso) : '—',
+          }),
+        );
+      }
       if (item.reason === 'stale') return esc(t('report.stale', { days: item.days ?? 0 }));
       return esc(t('report.mixedUnits'));
     };
+
+    /** The attention box's groups — the state is stated once, in the heading. */
+    const ATTENTION_GROUPS = [
+      { reasons: ['out-of-range'], key: 'report.attentionCurrent', cls: 'attn-now' },
+      { reasons: ['past-out-of-range'], key: 'report.attentionPast', cls: 'attn-past' },
+      { reasons: ['stale', 'mixed-units'], key: 'report.attentionNotes', cls: 'attn-notes' },
+    ] as const;
 
     const profileName = profileDisplayName(ctx.data.profile.name, t);
     const snapshot = selection.mode === 'snapshot' && !!selection.asOfIso;
@@ -230,11 +249,19 @@ export const reportExportPlugin: ExportPlugin = {
 
       // Attention section (interpretation first), if any.
       if (model.attention.length > 0) {
-        const items = model.attention
-          .map((item) => `<li>${metricName(item)} — ${attentionText(item)}</li>`)
-          .join('');
+        const groups = ATTENTION_GROUPS.map((g) => {
+          const mine = model.attention.filter((i) => g.reasons.some((r) => r === i.reason));
+          if (mine.length === 0) return '';
+          const items = mine
+            .map((item) => {
+              const detail = attentionText(item);
+              return `<li>${metricName(item)}${detail ? ` <span class="detail">${detail}</span>` : ''}</li>`;
+            })
+            .join('');
+          return `<div class="${g.cls}"><h3>${esc(t(g.key))}</h3><ul>${items}</ul></div>`;
+        }).join('');
         parts.push(
-          `<section class="attention"><h2>${esc(t('report.attention'))}</h2><ul>${items}</ul></section>`,
+          `<section class="attention"><h2>${esc(t('report.attention'))}</h2>${groups}</section>`,
         );
       }
 
@@ -302,6 +329,11 @@ tr.out-of-range td { background: #fdf3f2; }
 .attention { border: 1px solid #f0d9d5; background: #fdf6f4; border-radius: 8px; padding: 4px 16px 12px; }
 .attention ul { margin: 6px 0 0; padding-left: 18px; }
 .attention li { margin: 3px 0; }
+.attention h3 { margin: 10px 0 2px; font-size: 13px; font-weight: 700; color: #555; }
+.attention .attn-now h3 { color: #8a2318; }
+.attention .attn-now li { color: #8a2318; }
+.attention .attn-past li, .attention .attn-notes li { color: #444; }
+.attention .detail { color: #777; font-size: 12px; }
 .disclaimer { margin-top: 32px; font-size: 12px; color: #777; border-top: 1px solid #e2e2e2; padding-top: 12px; }
 @media print {
   @page { size: A4; margin: 16mm; }

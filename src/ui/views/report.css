@@ -78,6 +78,24 @@
   visibility: hidden;
   display: inline-block;
 }
+/* Trend trace controls: the "at all" checkbox and the same three-way choice the
+   Overview list has. Screen only — they live in .report-toolbar. */
+.report-spark-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.report-spark-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .report-age {
   display: block;
   font-size: 0.78rem;
@@ -87,33 +105,247 @@
   margin-bottom: 2px;
 }
 
-/* Screen-only metric picker: adjust which metrics the report shows (the subset
-   handed off from a filtered overview is pre-checked). Never printed. */
-.report-select {
+/* ---- Metric picker (screen only) ---------------------------------------
+
+   Closed by default: the summary has to begin with the summary, not with 77
+   checkboxes. The open panel is a tool, so it never reaches paper — the whole
+   card is display:none in the print block at the bottom of this file. */
+
+.report-picker {
   margin: 8px 0 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+  padding: 12px 14px;
 }
-.report-select > summary {
-  cursor: pointer;
-  font-weight: 600;
-  padding: 10px 14px;
-  min-height: 44px;
+.report-picker--closed {
   display: flex;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
-.report-select-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 6px 16px;
-  padding: 4px 14px 14px;
+.report-picker-text {
+  flex: 1 1 220px;
+  min-width: 0;
 }
-.report-select-item {
+.report-picker-count {
+  font-weight: 700;
+}
+.report-picker-sub {
+  font-size: 0.9rem;
+  margin-top: 2px;
+}
+.report-picker-warn {
+  color: var(--danger);
+  font-size: 0.9rem;
+  margin: 4px 0 0;
+}
+.report-picker-edit {
+  flex: 0 0 auto;
+}
+
+.report-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.report-picker-search {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+  padding: 9px 14px;
+  min-height: 44px;
+}
+
+/* Quick presets SET the selection, so they are buttons, not toggles. The
+   active state only says "this is exactly what is selected right now". */
+.report-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.report-picker-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 7px 14px;
+  min-height: 36px;
+  cursor: pointer;
+}
+.report-picker-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.report-picker-chip--none {
+  background: transparent;
+  border-color: transparent;
+}
+@media (hover: hover) {
+  .report-picker-chip:hover {
+    border-color: var(--accent);
+  }
+  .report-picker-chip--none:hover {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+}
+
+.report-picker-group + .report-picker-group {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.report-picker-group-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 44px;
+}
+.report-picker-group-toggle {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
   cursor: pointer;
+  padding: 6px 0;
+  min-width: 0;
+}
+/* A caret that turns with the group, so its state reads without the label. */
+.report-picker-group-toggle::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentcolor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.12s ease;
+}
+.report-picker-group-toggle[aria-expanded='true']::before {
+  transform: rotate(90deg);
+}
+.report-picker-group-count {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.report-picker-group-bulk {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.report-picker-bulk {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 6px 8px;
+  min-height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .report-picker-bulk:hover {
+    background: var(--surface-2);
+  }
+}
+
+/* auto-fill does the responsive work: 3 columns on desktop, 2 on tablet, 1 on
+   a phone — no media queries, and a long name simply wraps. */
+.report-picker-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 2px 8px;
+  padding-bottom: 8px;
+}
+.report-picker-list[hidden] {
+  display: none;
+}
+
+/* Checkbox FIRST, name right beside it, both left-aligned. The old right-aligned
+   name left 5–15 characters of gap and you had to guess which box it belonged
+   to — that was the single worst thing about this panel. */
+.report-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.report-picker-item.is-on {
+  color: var(--text);
+  font-weight: 700;
+}
+@media (hover: hover) {
+  .report-picker-item:hover {
+    background: var(--surface-2);
+  }
+}
+.report-picker-name {
+  min-width: 0;
+  text-wrap: pretty;
+}
+.report-picker-nodata {
+  font-weight: 400;
+  font-size: 0.8rem;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+/* The native control cannot take a radius or a size, so it is replaced —
+   accent-color alone would only recolour it. */
+.report-picker-check {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  border: 1.5px solid var(--check-border);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+  position: relative;
+}
+.report-picker-check:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.report-picker-check:checked::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 5px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.report-picker-check:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .report-attention {
@@ -135,8 +367,36 @@
   cursor: pointer;
   padding: 2px 0;
 }
-.report-attention li.attn-range {
+/* The state is said ONCE, by the group heading — the lines carry only the metric
+   and its date. Repeating "outside the source reference range" after every name
+   filled the box with the same sentence five times over. */
+.attn-group + .attn-group {
+  margin-top: 10px;
+}
+/* Sentence case, not caps: these headings carry a whole clause, and all-caps
+   turns a clause into a wall. */
+.attn-group-title {
+  margin: 0 0 2px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.attn-group--now .attn-group-title,
+.attn-group--now li .attn-name {
   color: var(--above);
+}
+.attn-group--past li .attn-name,
+.attn-group--notes li .attn-name {
+  color: var(--text);
+}
+.attn-name {
+  font-weight: 600;
+}
+/* The date / count sits beside the name, quieter than it. */
+.attn-detail {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-left: 8px;
 }
 
 .report-section {
@@ -214,6 +474,39 @@
 .report-section th.num {
   font-variant-numeric: tabular-nums;
 }
+/* The trace is a full-width line UNDER the metric's row, not a column: with six
+   content columns there is no width left for a trace worth looking at. The
+   value row above it drops its rule so the pair reads as one row. */
+.report-section tr.has-spark td {
+  border-bottom: none;
+  padding-bottom: 2px;
+}
+.report-section tr.report-spark-row td {
+  white-space: normal;
+  padding: 0 8px 8px;
+}
+/* The trace gets its own lane. Without it a two-point series is a straight line
+   spanning the whole row and reads as a rule (or a strike-through) rather than
+   as a chart — worst of all on a tinted out-of-range row, where it looks red. */
+.report-section tr.report-spark-row .metric-spark-plot,
+.report-card-spark .metric-spark-plot {
+  background: var(--spark-lane);
+  border-radius: 5px;
+  padding: 0 2px;
+}
+/* The shared time axis closes the table (and the card list): the same side
+   padding as a trace cell, so a mark lands under the gridline it names. */
+.report-section tr.report-spark-axis-row td {
+  white-space: normal;
+  padding: 0 8px 4px;
+  border-bottom: none;
+}
+.report-card-spark {
+  margin-top: 8px;
+}
+.report-cards-axis {
+  margin-top: 4px;
+}
 /* Out-of-range rows carry the state at a glance (subtle, print-friendly). */
 .report-section tr.out-of-range td {
   background: var(--above-soft);
@@ -236,7 +529,8 @@
   .app-nav,
   .report-back,
   .report-toolbar,
-  .report-select,
+  .report-picker,
+  .report-picker-host,
   .toast-host {
     display: none !important;
   }
@@ -260,6 +554,14 @@
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+  /* Same lane on paper, greyscale: it is what keeps the trace from reading as a
+     line drawn through the row. */
+  .report-section tr.report-spark-row .metric-spark-plot,
+  .report-card-spark .metric-spark-plot {
+    background: #f2f2f2;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
   .report-section td,
   .report-section th {
     border-color: #ccc;
@@ -271,5 +573,12 @@
   .report-section,
   .report-attention {
     break-inside: avoid;
+  }
+  /* A value row and its trace are one unit — never split them across pages. */
+  .report-section tr {
+    break-inside: avoid;
+  }
+  .report-section tr.has-spark {
+    break-after: avoid;
   }
 }

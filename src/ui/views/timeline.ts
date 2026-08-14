@@ -14,7 +14,7 @@
 import type { AppContext, View } from '../app-context';
 import { formatDateTime } from '../../i18n/index';
 import './timeline.css';
-import { valueWithUnitEl } from '../format-value';
+import { unitLabel, valueWithUnitEl } from '../format-value';
 import type { MetricCategory, SourceId } from '../../core/types';
 import {
   applySourceToGroup,
@@ -366,7 +366,7 @@ function readingEl(ctx: AppContext, value: TimelineValueModel): HTMLElement {
     }
   }
   const rounded = ctx.units.round(displayValue, displayUnit, metric);
-  const unitSymbol = ctx.units.getUnit(displayUnit)?.display ?? displayUnit;
+  const unitSymbol = unitLabel(ctx.units, displayUnit, ctx.t);
   return valueWithUnitEl({
     value: rounded,
     ...(unitSymbol ? { unit: unitSymbol } : {}),

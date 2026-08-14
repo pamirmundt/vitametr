@@ -15,7 +15,29 @@
  * engine and passed in.
  */
 
-import { formatNumber as defaultFormatNumber } from '../i18n/index';
+import { formatNumber as defaultFormatNumber, t as defaultT, type StringKey } from '../i18n/index';
+import type { UnitDef } from '../core/types';
+
+/**
+ * What to print for a unit code. Almost every unit is a symbol the units table
+ * carries verbatim (`mmol/l`, `mmHg`, `°C`) — the same in every language. The
+ * exception is a unit with no symbol at all: a bare dimensionless ratio is `1`
+ * in UCUM, and "0 1" on screen reads as a typo, so such a unit carries an i18n
+ * key and is printed as a word.
+ *
+ * `translate` is injectable because an export can be rendered in a locale other
+ * than the one the UI is currently in.
+ */
+export function unitLabel(
+  units: { getUnit(code: string): UnitDef | undefined },
+  code: string | undefined,
+  translate: (key: StringKey) => string = defaultT,
+): string {
+  if (!code) return '';
+  const def = units.getUnit(code);
+  if (!def) return code;
+  return def.displayKey ? translate(def.displayKey as StringKey) : def.display;
+}
 
 /** Digit → unicode superscript, for normalising `10*9` into `10⁹`. */
 const TO_SUPERSCRIPT: Record<string, string> = {

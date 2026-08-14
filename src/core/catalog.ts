@@ -29,6 +29,16 @@ function normalizeName(name: string): string {
     .replace(/\s+/g, ' ');
 }
 
+/**
+ * A looser key for the fallback alias pass: everything but letters and digits
+ * is dropped, so hyphens, dots and spacing stop mattering ("25-OH vitamin D"
+ * and "25OH vitamin D" collapse to the same key). Applied to an already
+ * {@link normalizeName}d string.
+ */
+function looseName(normalized: string): string {
+  return normalized.replace(/[^a-z0-9]/g, '');
+}
+
 /** Union of alias lists, de-duplicated by normalized form, first spelling wins. */
 function dedupeAliases(aliases: readonly string[]): string[] {
   const seen = new Set<string>();
@@ -165,20 +175,30 @@ export function createCatalog(profileData: ProfileData): Catalog {
   function resolveAlias(name: string): Metric | undefined {
     const needle = normalizeName(name);
     if (!needle) return undefined;
-    const nameMatches = (metric: Metric): boolean => {
+    const looseNeedle = looseName(needle);
+    const candidatesOf = (metric: Metric): string[] => {
       const candidates = [...metric.aliases];
       if (metric.key) candidates.push(metric.key);
       if (metric.customName) candidates.push(metric.customName);
-      return candidates.some((c) => normalizeName(c) === needle);
+      return candidates;
     };
+    const exactMatch = (metric: Metric): boolean =>
+      candidatesOf(metric).some((c) => normalizeName(c) === needle);
+    // Second pass: ignore punctuation and spacing too, so "25OH vitamin D"
+    // finds the alias "25-OH vitamin D" and "Apo-B" finds "Apo B". Only ever
+    // consulted after every exact match has failed, so it can never outrank one.
+    const looseMatch = (metric: Metric): boolean =>
+      looseNeedle !== '' && candidatesOf(metric).some((c) => looseName(normalizeName(c)) === looseNeedle);
     // A user's OWN metric wins over a built-in on a name match: scan the custom
     // (non-`builtin:`) metrics first, so a metric re-created via "create as your
     // own" catches future imports of that name instead of re-matching the
     // built-in (which would re-trigger the hidden-pack flow). Merged built-in
     // overrides keep resolving as built-ins (their id stays `builtin:<key>`).
     const all = computeAll();
-    for (const metric of all) if (!metric.id.startsWith('builtin:') && nameMatches(metric)) return metric;
-    for (const metric of all) if (metric.id.startsWith('builtin:') && nameMatches(metric)) return metric;
+    for (const match of [exactMatch, looseMatch]) {
+      for (const metric of all) if (!metric.id.startsWith('builtin:') && match(metric)) return metric;
+      for (const metric of all) if (metric.id.startsWith('builtin:') && match(metric)) return metric;
+    }
     return undefined;
   }
 

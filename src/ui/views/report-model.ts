@@ -69,6 +69,14 @@ export interface ReportRow {
   ageDays: number;
   mixedUnits: boolean;
   count: number;
+  /**
+   * How many readings BEFORE the latest one fell outside the reference range
+   * their own source stated. A value back inside the range says nothing about
+   * the history that led there, so the summary reports both.
+   */
+  pastOutOfRange: number;
+  /** When the most recent of those was taken (ISO), for the attention note. */
+  pastOutOfRangeIso?: string;
 }
 
 export interface ReportCategory {
@@ -76,7 +84,11 @@ export interface ReportCategory {
   rows: ReportRow[];
 }
 
-export type AttentionReason = 'out-of-range' | 'stale' | 'mixed-units';
+export type AttentionReason =
+  | 'out-of-range'
+  | 'past-out-of-range'
+  | 'stale'
+  | 'mixed-units';
 
 export interface AttentionItem {
   metricId: MetricId;
@@ -85,6 +97,14 @@ export interface AttentionItem {
   reason: AttentionReason;
   /** For 'stale': how many days since the last measurement. */
   days?: number;
+  /** How many earlier readings were outside the range (excluding the latest). */
+  count?: number;
+  /**
+   * The date the line is about (ISO): for 'out-of-range' the latest reading —
+   * which can be months old, so the summary always names it — and for
+   * 'past-out-of-range' the most recent excursion.
+   */
+  lastIso?: string;
 }
 
 export interface ReportModel {
@@ -127,6 +147,7 @@ function buildRow(
       ageDays: ageDays(last, nowIso),
       mixedUnits: false,
       count: series.length,
+      pastOutOfRange: 0,
     };
   }
 
@@ -156,6 +177,8 @@ function buildRow(
     deltaKind = diff > 0 ? 'up' : diff < 0 ? 'down' : 'same';
   }
 
+  const history = pastOutOfRange(series, last);
+
   return {
     metricId: metric.id,
     ...nameOf(metric),
@@ -174,7 +197,31 @@ function buildRow(
     ageDays: ageDays(last, nowIso),
     mixedUnits: mixedUnits(series),
     count: series.length,
+    pastOutOfRange: history.count,
+    pastOutOfRangeIso: history.lastIso,
   };
+}
+
+/**
+ * Earlier readings that fell outside the range their OWN source stated — the
+ * latest one is excluded because it is reported separately as the current state.
+ * Each reading is judged against its own range, so a lab that changed its
+ * reference values never turns old readings into false alarms.
+ */
+function pastOutOfRange(
+  series: readonly Measurement[],
+  last: Measurement,
+): { count: number; lastIso?: string } {
+  let count = 0;
+  let lastIso: string | undefined;
+  for (const m of series) {
+    if (m.id === last.id) continue;
+    const state = rangePosition(m);
+    if (state !== 'above' && state !== 'below') continue;
+    count += 1;
+    if (lastIso === undefined || m.takenAt > lastIso) lastIso = m.takenAt;
+  }
+  return { count, lastIso };
 }
 
 /**
@@ -205,18 +252,38 @@ export function buildReport(
       .sort((a, b) => sortName(a).localeCompare(sortName(b))),
   })).filter((c) => c.rows.length > 0);
 
-  const attention: AttentionItem[] = [];
+  // Grouped, not interleaved: what is outside the range RIGHT NOW comes first,
+  // then what used to be, then the housekeeping notes. A metric back inside its
+  // range still belongs here — the history is the point — but it must never read
+  // like a current excursion.
+  const now: AttentionItem[] = [];
+  const past: AttentionItem[] = [];
+  const notes: AttentionItem[] = [];
   for (const r of rows) {
+    const who = { metricId: r.metricId, nameKey: r.nameKey, customName: r.customName };
     if (r.rangeState === 'above' || r.rangeState === 'below') {
-      attention.push({ metricId: r.metricId, nameKey: r.nameKey, customName: r.customName, reason: 'out-of-range' });
+      now.push({
+        ...who,
+        reason: 'out-of-range',
+        count: r.pastOutOfRange,
+        lastIso: r.lastMeasuredIso,
+      });
+    } else if (r.pastOutOfRange > 0) {
+      past.push({
+        ...who,
+        reason: 'past-out-of-range',
+        count: r.pastOutOfRange,
+        lastIso: r.pastOutOfRangeIso,
+      });
     }
     if (r.ageDays >= STALE_DAYS) {
-      attention.push({ metricId: r.metricId, nameKey: r.nameKey, customName: r.customName, reason: 'stale', days: r.ageDays });
+      notes.push({ ...who, reason: 'stale', days: r.ageDays });
     }
     if (r.mixedUnits) {
-      attention.push({ metricId: r.metricId, nameKey: r.nameKey, customName: r.customName, reason: 'mixed-units' });
+      notes.push({ ...who, reason: 'mixed-units' });
     }
   }
+  const attention = [...now, ...past, ...notes];
 
   return {
     categories,

@@ -25,7 +25,8 @@
   line-height: 1.15;
 }
 
-/* Summary chips: soft pills with a small state dot. */
+/* Summary chips: soft pills with a small state dot — and the quickest filter
+   in the app (tap "5 above range" to see just those five). */
 .overview-chips {
   display: flex;
   flex-wrap: wrap;
@@ -38,8 +39,19 @@
   gap: 6px;
   padding: 6px 12px;
   border-radius: 999px;
+  font: inherit;
   font-size: 0.85rem;
   font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+.overview-chip:hover {
+  box-shadow: inset 0 0 0 1px currentcolor;
+}
+/* The pressed chip carries its own tint as an outline — the tints already mean
+   "in range / above / below", so the state needs no second colour. */
+.overview-chip.is-active {
+  box-shadow: inset 0 0 0 2px currentcolor;
 }
 .overview-chip .chip-dot {
   width: 7px;
@@ -253,6 +265,37 @@
 }
 .overview-layout-toggle .seg-btn svg {
   display: block;
+}
+
+/* Trace mode (Hidden / Out of range / All) — shown only alongside the list
+   layout, since tiles carry the wording instead of a trace. The caption is
+   dropped on the phone, where the toolbar has no room for it. */
+.overview-spark-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* `display` here would otherwise beat the UA sheet's `[hidden] { display: none }`,
+   leaving the list-only toggle visible over the tiles. */
+.overview-spark-control[hidden] {
+  display: none;
+}
+.overview-spark-label {
+  display: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.overview-spark-toggle .seg-btn--text {
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+@media (min-width: 900px) {
+  .overview-spark-label {
+    display: inline;
+  }
 }
 
 /* Summary / print button: gains an accent-soft highlight while the overview is
@@ -483,6 +526,26 @@
 .overview-row + .overview-row {
   border-top: 1px solid var(--border);
 }
+/* A row that carries a trend trace gains one grid line for it, spanning every
+   column. Only rows that actually draw one get the extra track, so a trace-less
+   row keeps its exact previous height. */
+.overview-row--spark {
+  grid-template-areas:
+    'metric value'
+    'age status'
+    'spark spark';
+}
+.overview-row-spark {
+  grid-area: spark;
+  min-width: 0;
+  margin-top: 2px;
+}
+/* The shared time axis, closing the list. Its side padding matches the rows'
+   so a mark lands exactly under the gridline it names inside every trace. */
+.overview-spark-axis {
+  padding: 0 14px 8px;
+  border-top: 1px solid var(--border);
+}
 @media (hover: hover) {
   .overview-row:hover {
     background: var(--surface-2);
@@ -580,6 +643,11 @@
     grid-template-areas: 'metric value range change age status';
     align-items: center;
     gap: 12px;
+  }
+  .overview-row--spark {
+    grid-template-areas:
+      'metric value range change age status'
+      'spark spark spark spark spark spark';
   }
   .overview-list-head {
     display: grid;

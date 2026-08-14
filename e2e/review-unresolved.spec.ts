@@ -53,15 +53,16 @@ function unresolvedCard(page: Page) {
   return page.locator('.review-item--unresolved');
 }
 
-test('suggestion chips surface platelet volume, never cholesterol; a chip resolves the row', async ({ page }) => {
+test('suggestions surface platelet volume, never cholesterol; one tap resolves the row', async ({ page }) => {
   const errors = trackErrors(page);
   await toReview(page);
 
   const card = unresolvedCard(page);
   await expect(card).toBeVisible();
 
-  // Chips are present and relevant: MPV (fl + name token) shows, cholesterol never.
-  const chips = card.locator('.review-suggest-chip');
+  // Suggestions are present and relevant: MPV (fl + name token) shows, cholesterol
+  // never. A candidate is a card or — from the third one down — a compact row.
+  const chips = card.locator('.review-suggest-card, .review-suggest-row');
   await expect(chips.filter({ hasText: 'Mean platelet volume' })).toBeVisible();
   await expect(chips.filter({ hasText: /holesterol/ })).toHaveCount(0);
 
@@ -85,7 +86,7 @@ test('review decisions survive navigating away and back', async ({ page }) => {
   await toReview(page);
 
   // Resolve the unknown row by assigning MPV, and change my mind on it via "Change".
-  await unresolvedCard(page).locator('.review-suggest-chip').filter({ hasText: 'Mean platelet volume' }).click();
+  await unresolvedCard(page).locator('.review-suggest-card, .review-suggest-row').filter({ hasText: 'Mean platelet volume' }).click();
   await expect(unresolvedCard(page)).toHaveCount(0);
 
   // Leave review (as if to check something elsewhere) and come back.

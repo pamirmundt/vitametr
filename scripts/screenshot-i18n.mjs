@@ -48,6 +48,7 @@ export const STR = {
     summary: /Summary/,
     compare: /Compare/,
     continueReview: /Continue to review/,
+    importSelected: /Import selected/,
     listView: 'List view',
     glucose: 'Glucose',
     bodyWeight: 'Body weight',
@@ -55,6 +56,8 @@ export const STR = {
     ldlCholesterol: 'LDL cholesterol',
     creatinine: 'Creatinine',
     tsh: 'TSH',
+    range: 'Range',
+    editSelection: 'Edit selection',
   },
   cs: {
     addValues: 'Zadat hodnoty',
@@ -70,6 +73,7 @@ export const STR = {
     summary: /Souhrn/,
     compare: /Porovnat/,
     continueReview: /Pokračovat na kontrolu/,
+    importSelected: /Importovat vybrané/,
     listView: 'Zobrazení seznam',
     glucose: 'Glukóza',
     bodyWeight: 'Hmotnost',
@@ -77,5 +81,7 @@ export const STR = {
     ldlCholesterol: 'LDL cholesterol',
     creatinine: 'Kreatinin',
     tsh: 'TSH',
+    range: 'Meze',
+    editSelection: 'Upravit výběr',
   },
 };

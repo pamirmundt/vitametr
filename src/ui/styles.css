@@ -49,6 +49,17 @@
   --danger: #a83c26;
   --above: #a83c26; --above-soft: #f9e6e0;
   --below: #3a6fb8; --below-soft: #e2ebf6;
+  /* Source-stated reference band behind a row trace — neutral by design: the
+     band is what the lab reported, never our claim, so it is never tinted. */
+  --spark-band: #f2f6f6;
+  /* Calendar marks of the shared trace axis — a hint, never a gridline that
+     competes with the trace itself. */
+  --spark-grid: #e4ecec;
+  /* The lane a trace is drawn in (summary table + cards): without it a flat
+     two-point series reads as a rule across the row, not as a chart. */
+  --spark-lane: #eef3f4;
+  /* Unchecked checkbox outline — the native control is replaced, see report.css. */
+  --check-border: #c3d2d5;
 
   --radius: 20px;
   --radius-input: 12px;
@@ -84,6 +95,10 @@
   --danger: #e0765f;
   --above: #e0765f; --above-soft: #3a231e;
   --below: #6fa0dc; --below-soft: #1c2a3a;
+  --spark-band: #1e2a2d;
+  --spark-grid: #24343a;
+  --spark-lane: #1a2427;
+  --check-border: #3b4f56;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.5);
   --nav-bg: rgba(27, 37, 40, 0.9);

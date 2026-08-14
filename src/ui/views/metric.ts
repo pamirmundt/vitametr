@@ -35,7 +35,7 @@ import { tagLabel } from '../../core/tags';
 import { watchStar } from '../components/watch-star';
 import { sourcePicker } from '../components/source-picker';
 import type { SourceSelection } from '../components/source-picker-model';
-import { valueWithUnitEl } from '../format-value';
+import { unitLabel, valueWithUnitEl } from '../format-value';
 import '../chart.css';
 
 type Period = '3m' | 'year' | '5y' | 'all';
@@ -85,7 +85,7 @@ function metricName(ctx: AppContext, metric: Metric): string {
 }
 
 function unitDisplay(ctx: AppContext, code: string): string {
-  return ctx.units.getUnit(code)?.display ?? code;
+  return unitLabel(ctx.units, code, ctx.t);
 }
 
 /** Compute an inclusive `from` ISO bound for a period, relative to ctx.now(). */

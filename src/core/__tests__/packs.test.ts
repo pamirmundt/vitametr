@@ -157,8 +157,8 @@ describe('bundled packs — category completeness (derived from tags)', () => {
 });
 
 describe('Core pack + CORE_METRIC_KEYS', () => {
-  it('captures exactly the 95 routine keys and excludes the moved extras', () => {
-    expect(CORE_METRIC_KEYS.length).toBe(95);
+  it('captures exactly the 105 routine keys and excludes the moved extras', () => {
+    expect(CORE_METRIC_KEYS.length).toBe(105);
     const set = new Set(CORE_METRIC_KEYS);
     // Routine metrics are core.
     for (const k of ['glucose', 'hemoglobin', 'creatinine', 'tsh', 'nt-probnp']) {

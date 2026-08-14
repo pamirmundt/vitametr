@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildChartModel,
+  buildSparklineModel,
   niceTicks,
   scaleLinear,
   timeTicks,
@@ -280,5 +281,189 @@ describe('buildChartModel', () => {
     const model = buildChartModel(points, config);
     expect(model.yDomain[0]).toBeLessThanOrEqual(2);
     expect(model.yDomain[1]).toBeGreaterThanOrEqual(12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildSparklineModel — the row trace (per-row domain, no axes)
+// ---------------------------------------------------------------------------
+
+describe('buildSparklineModel', () => {
+  const spark = { width: 300, height: 28 };
+
+  it('is empty when no reading falls inside the domain', () => {
+    const model = buildSparklineModel([{ t: 100 * DAY, value: 5 }], {
+      ...spark,
+      domain: [0, 10 * DAY],
+    });
+    expect(model.isEmpty).toBe(true);
+    expect(model.polyline).toBe('');
+    expect(model.last).toBeUndefined();
+  });
+
+  it('uses the caller domain, never the series extent', () => {
+    const points: ChartPoint[] = [
+      { t: 10 * DAY, value: 4 },
+      { t: 20 * DAY, value: 6 },
+    ];
+    const model = buildSparklineModel(points, { ...spark, domain: [0, 40 * DAY] });
+    const xs = model.polyline.split(' ').map((p) => Number(p.split(',')[0]));
+    // The trace occupies the quarter-to-half band of a domain twice its extent,
+    // instead of being stretched edge to edge.
+    expect(xs[0]).toBeGreaterThan(spark.width * 0.2);
+    expect(xs[xs.length - 1]).toBeLessThan(spark.width * 0.6);
+    expect(model.xDomain).toEqual([0, 40 * DAY]);
+  });
+
+  it('drops readings outside the domain instead of clamping them', () => {
+    const points: ChartPoint[] = [
+      { t: -5 * DAY, value: 99 },
+      { t: DAY, value: 4 },
+      { t: 2 * DAY, value: 5 },
+      { t: 50 * DAY, value: 99 },
+    ];
+    const model = buildSparklineModel(points, { ...spark, domain: [0, 10 * DAY] });
+    expect(model.count).toBe(2);
+    expect(model.from).toBe(DAY);
+    expect(model.to).toBe(2 * DAY);
+    expect(model.yDomain[1]).toBeLessThan(99);
+  });
+
+  it('flags a single reading, drawing only its dot', () => {
+    const model = buildSparklineModel([{ t: DAY, value: 5, refLow: 4, refHigh: 6 }], {
+      ...spark,
+      domain: [0, 2 * DAY],
+    });
+    expect(model.single).toBe(true);
+    expect(model.count).toBe(1);
+    expect(model.polyline).toBe('');
+    expect(model.last).toBeDefined();
+    // No band: one reading spans no time, and on a shared axis a band around it
+    // is a stray square rather than a statement about a period.
+    expect(model.bands).toEqual([]);
+  });
+
+  it('centres a constant series on a horizontal line', () => {
+    const points: ChartPoint[] = [
+      { t: 0, value: 5 },
+      { t: DAY, value: 5 },
+      { t: 2 * DAY, value: 5 },
+    ];
+    const model = buildSparklineModel(points, { ...spark, domain: [0, 2 * DAY] });
+    const ys = model.polyline.split(' ').map((p) => Number(p.split(',')[1]));
+    for (const y of ys) expect(y).toBeCloseTo(spark.height / 2, 1);
+  });
+
+  it('merges a band that holds and steps where the bounds change', () => {
+    const points: ChartPoint[] = [
+      { t: 0, value: 5, refLow: 4, refHigh: 6 },
+      { t: DAY, value: 5, refLow: 4, refHigh: 6 },
+      { t: 2 * DAY, value: 5, refLow: 3, refHigh: 7 },
+    ];
+    const model = buildSparklineModel(points, { ...spark, domain: [0, 2 * DAY] });
+    expect(model.bands.length).toBe(2);
+    expect(model.bands[0].refHigh).toBe(6);
+    expect(model.bands[1].refHigh).toBe(7);
+    // Contiguous: the second segment starts where the first ends.
+    expect(model.bands[0].x + model.bands[0].width).toBeCloseTo(model.bands[1].x, 2);
+    // The band spans the full width — first back to the edge, last forward to it.
+    expect(model.bands[0].x).toBeCloseTo(0 + 4, 2);
+    expect(model.bands[1].x + model.bands[1].width).toBeCloseTo(spark.width - 4, 2);
+  });
+
+  it('keeps the band inside the reading span on a shared domain', () => {
+    // Two years of data on a ten-year shared axis: the band must not claim the
+    // eight years the metric was never measured in.
+    const points: ChartPoint[] = [
+      { t: 0, value: 5, refLow: 4, refHigh: 6 },
+      { t: 730 * DAY, value: 5, refLow: 4, refHigh: 6 },
+    ];
+    const model = buildSparklineModel(points, { ...spark, domain: [-365 * DAY, 3650 * DAY] });
+    expect(model.bands.length).toBe(1);
+    const band = model.bands[0];
+    const trace = model.polyline.split(' ').map((p) => Number(p.split(',')[0]));
+    expect(band.x).toBeCloseTo(trace[0] - 2, 1);
+    expect(band.x).toBeGreaterThan(spark.width * 0.05);
+    expect(band.x + band.width).toBeCloseTo(trace[trace.length - 1] + 2, 1);
+    expect(band.x + band.width).toBeLessThan(spark.width * 0.3);
+  });
+
+  it('maps shared-axis ticks to x coordinates, dropping those outside', () => {
+    const points: ChartPoint[] = [
+      { t: 0, value: 5 },
+      { t: 10 * DAY, value: 6 },
+    ];
+    const model = buildSparklineModel(points, {
+      ...spark,
+      domain: [0, 10 * DAY],
+      ticks: [-DAY, 0, 5 * DAY, 10 * DAY, 20 * DAY],
+    });
+    // Only the strictly interior tick survives — the domain edges are the ends
+    // of the trace, not marks to draw over.
+    expect(model.grid.length).toBe(1);
+    expect(model.grid[0]).toBeCloseTo(spark.width / 2, 1);
+  });
+
+  it('leaves a reading without both bounds out of the band', () => {
+    const points: ChartPoint[] = [
+      { t: 0, value: 5, refHigh: 6 },
+      { t: DAY, value: 5 },
+    ];
+    const model = buildSparklineModel(points, { ...spark, domain: [0, DAY] });
+    expect(model.bands).toEqual([]);
+  });
+
+  it('downsamples a dense series while keeping its extremes and its ends', () => {
+    const points: ChartPoint[] = [];
+    for (let i = 0; i < 4000; i += 1) {
+      points.push({ t: i * DAY, value: i === 1234 ? 500 : i === 2345 ? -500 : 10 });
+    }
+    const model = buildSparklineModel(points, { ...spark, domain: [0, 3999 * DAY] });
+    const coords = model.polyline.split(' ');
+    expect(model.count).toBe(4000);
+    expect(coords.length).toBeLessThanOrEqual(Math.round(spark.width * 0.4) + 2);
+    expect(coords.length).toBeGreaterThan(2);
+    // The spikes survive: the value domain still reaches both of them.
+    expect(model.yDomain[0]).toBeLessThanOrEqual(-500);
+    expect(model.yDomain[1]).toBeGreaterThanOrEqual(500);
+    // The trace still starts and ends on real readings.
+    expect(Number(coords[0].split(',')[0])).toBeCloseTo(4, 2);
+    expect(Number(coords[coords.length - 1].split(',')[0])).toBeCloseTo(spark.width - 4, 2);
+  });
+
+  it('marks the end dot as out of range only when the last reading is', () => {
+    const inRange = buildSparklineModel(
+      [
+        { t: 0, value: 9, refLow: 4, refHigh: 6 },
+        { t: DAY, value: 5, refLow: 4, refHigh: 6 },
+      ],
+      { ...spark, domain: [0, DAY] },
+    );
+    expect(inRange.lastOutOfRange).toBe(false);
+    const above = buildSparklineModel(
+      [
+        { t: 0, value: 5, refLow: 4, refHigh: 6 },
+        { t: DAY, value: 9, refLow: 4, refHigh: 6 },
+      ],
+      { ...spark, domain: [0, DAY] },
+    );
+    expect(above.lastOutOfRange).toBe(true);
+    expect(above.lastValue).toBe(9);
+  });
+
+  it('reports censored readings as their own markers', () => {
+    const points: ChartPoint[] = [
+      { t: 0, value: 0.1, operator: '<' },
+      { t: DAY, value: 5 },
+    ];
+    const model = buildSparklineModel(points, { ...spark, domain: [0, DAY] });
+    expect(model.censored.length).toBe(1);
+    expect(model.censored[0].x).toBeCloseTo(4, 2);
+  });
+
+  it('survives a zero-width domain without dividing by zero', () => {
+    const model = buildSparklineModel([{ t: 0, value: 5 }], { ...spark, domain: [0, 0] });
+    expect(model.isEmpty).toBe(false);
+    expect(Number.isFinite(model.last?.x)).toBe(true);
   });
 });

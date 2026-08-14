@@ -291,6 +291,16 @@ export interface ReviewItem {
   /** Filled by normalization; undefined while the metric is unresolved. */
   resolvedMetricId?: MetricId;
   decision: 'pending' | 'accept' | 'reject';
+  /**
+   * The units this row could be in, when the file stated none and the resolved
+   * metric admits more than one (e.g. hematocrit in `L/L` or `%` — a hundredfold
+   * difference). Filled by `prepare`; empty/absent for every other row. While it
+   * is set and {@link unitChoice} is not, the row cannot be accepted: picking for
+   * the user here would be a silent guess (spec §16).
+   */
+  unitChoices?: string[];
+  /** The unit the user picked from {@link unitChoices}. */
+  unitChoice?: string;
 }
 
 export interface ImportPipeline {
