@@ -30,6 +30,8 @@ import type { ExportContext, ExportSelection } from '../../core/contracts';
 import type { ProfileSettings, Source, SourceKind, UnitSystem } from '../../core/types';
 import type { StringKey } from '../../i18n/index';
 import { applyTheme, animateThemeChange } from '../theme';
+import { getDeviceTheme, setDeviceTheme } from '../device-prefs';
+import { renderProfilesSection } from './settings-profiles';
 import { exportPluginById } from '../../plugins/registry';
 import { LOINC_ATTRIBUTION } from '../../core/catalog-data';
 import { switchControl } from '../components/switch';
@@ -283,9 +285,10 @@ function renderProfileNameRow(ctx: AppContext): HTMLElement {
 
 /**
  * Appearance row: an Auto / Light / Dark segmented control bound to
- * `settings.theme` (absent ⇒ 'auto'), mirroring the language/units controls.
- * The choice is persisted via `ctx.mutate` and applied immediately by swapping
- * the `data-theme` attribute on <html> — no view re-render is needed.
+ * the DEVICE's appearance preference (absent ⇒ 'auto'). Appearance belongs to
+ * the browser, not to the tracked person: switching profile must not repaint
+ * the app. Applied immediately by swapping the `data-theme` attribute on <html>
+ * — no view re-render is needed.
  */
 type ThemePref = NonNullable<ProfileSettings['theme']>;
 
@@ -293,7 +296,7 @@ function renderAppearanceRow(ctx: AppContext): HTMLElement {
   const row = el('div', 'settings-row');
   row.append(textEl('span', ctx.t('settings.theme'), 'settings-row-label'));
 
-  const current: ThemePref = ctx.data().settings.theme ?? 'auto';
+  const current: ThemePref = getDeviceTheme() ?? 'auto';
   const seg = el('div', 'settings-segment');
   const options: { pref: ThemePref; labelKey: StringKey }[] = [
     { pref: 'auto', labelKey: 'settings.themeAuto' },
@@ -308,10 +311,8 @@ function renderAppearanceRow(ctx: AppContext): HTMLElement {
       b.setAttribute('aria-current', 'true');
     }
     b.addEventListener('click', () => {
-      if ((ctx.data().settings.theme ?? 'auto') === pref) return;
-      ctx.mutate((d) => {
-        d.settings.theme = pref;
-      });
+      if ((getDeviceTheme() ?? 'auto') === pref) return;
+      setDeviceTheme(pref);
       animateThemeChange();
       applyTheme(pref);
       for (const other of buttons) {
@@ -872,7 +873,21 @@ function renderBackupSection(ctx: AppContext): HTMLElement {
   jsonBtn.addEventListener('click', () => renderExportPasswordPrompt(ctx));
   actions.append(jsonBtn);
 
-  body.append(actions, textEl('p', t('settings.backupNote'), 'muted settings-note'));
+  body.append(actions);
+  // A backup is one profile's data. With several tracked people that has to be
+  // said next to the button, not discovered when the file is restored.
+  if (ctx.profiles().length > 1) {
+    body.append(
+      textEl(
+        'p',
+        t('export.activeProfileOnly', {
+          name: profileDisplayName(ctx.data().profile.name, t),
+        }),
+        'muted settings-note',
+      ),
+    );
+  }
+  body.append(textEl('p', t('settings.backupNote'), 'muted settings-note'));
   return card;
 }
 
@@ -1084,12 +1099,16 @@ function renderFooter(ctx: AppContext): HTMLElement {
 
 export const settingsView: View = {
   render(container, ctx) {
+    const rerender = (): void => {
+      settingsView.render(container, ctx, ctx.currentRoute());
+    };
     container.replaceChildren();
     const root = el('div', 'settings-view');
     root.append(textEl('h1', ctx.t('settings.title')));
     root.append(
       renderTrustBanner(ctx),
       renderLanguageSection(ctx),
+      renderProfilesSection(ctx, rerender),
       renderSecuritySection(ctx),
       renderSourcesSection(ctx),
       renderBackupSection(ctx),

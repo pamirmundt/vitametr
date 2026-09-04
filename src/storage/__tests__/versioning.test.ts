@@ -38,8 +38,8 @@ function fakeCrypto(): CryptoProvider {
   };
 }
 
-async function readBlob(backend: KvBackend): Promise<ProfileData> {
-  const sealed = (await backend.get('blobs', 'default')) as Uint8Array;
+async function readBlob(backend: KvBackend, id: string): Promise<ProfileData> {
+  const sealed = (await backend.get('blobs', id)) as Uint8Array;
   return JSON.parse(new TextDecoder().decode(sealed)) as ProfileData;
 }
 
@@ -47,9 +47,9 @@ describe('appVersion stamping (app version vs data schema version)', () => {
   it('stamps the writing build on every persisted blob', async () => {
     const backend = createMemoryBackend();
     const store = createStore(backend, fakeCrypto(), { appVersion: '9.9.9' });
-    await store.init({ profileName: 'P' });
+    const { profile } = await store.init({ profileName: 'P' });
     await store.flush();
-    const blob = await readBlob(backend);
+    const blob = await readBlob(backend, profile.id);
     expect(blob.appVersion).toBe('9.9.9');
     // schemaVersion is separate and unaffected by app version.
     expect(blob.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
@@ -60,7 +60,7 @@ describe('forward compatibility: unknown fields survive a load/save round-trip',
   it('preserves fields written by a hypothetical newer app', async () => {
     const backend = createMemoryBackend();
     const s1 = createStore(backend, fakeCrypto(), { appVersion: '1.0.0' });
-    await s1.init({ profileName: 'P' });
+    const { profile } = await s1.init({ profileName: 'P' });
     // A newer app wrote extra fields this build does not model.
     s1.mutate((d) => {
       (d as unknown as Record<string, unknown>).futureTopLevel = { some: 'value' };
@@ -78,7 +78,7 @@ describe('forward compatibility: unknown fields survive a load/save round-trip',
     });
     await s2.flush();
 
-    const blob = await readBlob(backend);
+    const blob = await readBlob(backend, profile.id);
     expect((blob as unknown as Record<string, unknown>).futureTopLevel).toEqual({ some: 'value' });
     expect((blob.settings as unknown as Record<string, unknown>).futureSetting).toBe(42);
     expect(blob.settings.autoLockMinutes).toBe(5);

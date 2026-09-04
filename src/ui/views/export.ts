@@ -44,6 +44,7 @@ import {
   type ExportMode,
   type ExportPeriod,
 } from './export-model';
+import { exportProfileSlug, profileDisplayName } from './settings-model';
 import './export.css';
 
 function el(tag: string, className?: string): HTMLElement {
@@ -364,9 +365,14 @@ export const exportView: View = {
     }
 
     function defaultBaseName(): string {
+      // With several people on the device the file has to say whose data it is.
+      const slug = exportProfileSlug(
+        profileDisplayName(ctx.data().profile.name, ctx.t),
+        ctx.profiles().length,
+      );
       return mode === 'snapshot'
-        ? buildSnapshotBaseName(asOfIso)
-        : buildExportBaseName(ctx.now());
+        ? buildSnapshotBaseName(asOfIso, slug)
+        : buildExportBaseName(ctx.now(), slug);
     }
 
     // React to a mode/date change: per-row "no value at date" notes, the today

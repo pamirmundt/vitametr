@@ -33,7 +33,14 @@ import { formatHash, parseHash } from './router';
 import { VIEWS } from './views/index';
 import { newMeasurementId, nowIso } from './runtime';
 import { applyTheme } from './theme';
+import {
+  adoptDevicePrefs,
+  getDeviceLocale,
+  getDeviceTheme,
+  setDeviceLocale,
+} from './device-prefs';
 import { openFabMenu } from './components/fab-menu';
+import { profileSwitcher } from './components/profile-switcher';
 import { getLastDataRoute, rememberDataRoute } from './data-nav';
 
 const DEFAULT_AUTO_LOCK_MINUTES = 10;
@@ -46,7 +53,9 @@ const APP_VERSION: string =
 
 /** Mount the application into a root element and run the boot flow. */
 export async function mountApp(root: HTMLElement): Promise<void> {
-  setLocale(detectLocale());
+  // The device's own choice first; the browser's language only seeds the very
+  // first run. Both are device-scoped — switching profile never re-translates.
+  setLocale(getDeviceLocale() ?? detectLocale());
   const backend = await createIndexedDbBackend();
   const crypto = createCryptoProvider();
   const store = createStore(backend, crypto, { appVersion: APP_VERSION });
@@ -329,10 +338,14 @@ function mountShell(
 ): void {
   root.replaceChildren();
 
-  // Profile settings are now available: reconcile the theme painted at boot from
-  // the cache with the persisted preference (default 'auto'). This also (re)arms
-  // the live OS-scheme subscription when the preference is 'auto'.
-  applyTheme(store.getData().settings.theme ?? 'auto');
+  // A profile written before language and appearance became device-scoped still
+  // carries them; take them over once so the update is invisible to the user.
+  adoptDevicePrefs(store.getData().settings);
+  setLocale(getDeviceLocale() ?? getLocale());
+  // Reconcile the theme painted at boot from the cache with the stored
+  // preference (default 'auto'). This also (re)arms the live OS-scheme
+  // subscription when the preference is 'auto'.
+  applyTheme(getDeviceTheme() ?? 'auto');
 
   let route: RouteState = parseHash(location.hash);
   let teardown: (() => void) | undefined;
@@ -367,10 +380,12 @@ function mountShell(
   const brand = el('span', 'brand');
   brand.textContent = t('app.title');
   brandWrap.append(brandIcon, brand);
-  // The header is just the brand now: language is a set-once choice and lock is
-  // automatic (inactivity + background) with a manual "Lock now" in Settings —
-  // neither belongs on every screen (banking-app style).
-  header.append(brandWrap);
+  // The header is otherwise just the brand: language is a set-once choice and
+  // lock is automatic (inactivity + background) with a manual "Lock now" in
+  // Settings — neither belongs on every screen (banking-app style). The profile
+  // switcher does, but only once a second profile exists.
+  const switcherHost = el('div', 'app-header-profile');
+  header.append(brandWrap, switcherHost);
 
   main.append(header, content);
   shell.append(nav, main);
@@ -392,13 +407,35 @@ function mountShell(
       catalog = createCatalog(store.getData());
       reloadUnits();
     },
+
+    profiles: () => store.listProfiles(),
+    activeProfileId: () => store.activeProfileId(),
+    async switchProfile(id) {
+      if (id === store.activeProfileId()) return;
+      const opened = await store.switchProfile(id);
+      afterProfileChange(opened.profile.name);
+    },
+    async createProfile(profileOptions) {
+      const created = await store.createProfile(profileOptions);
+      afterProfileChange(created.profile.name);
+    },
+    async renameProfile(id, name) {
+      await store.renameProfile(id, name);
+      rerenderChrome();
+    },
+    async deleteProfile(id) {
+      await store.deleteProfile(id);
+      // Removing the second-to-last profile puts the app back into its
+      // single-profile appearance — the switcher has to go with it.
+      rerenderChrome();
+    },
     locale: getLocale(),
     setLocale(next: Locale) {
       setLocale(next);
       ctx.locale = next;
-      store.mutate((d) => {
-        d.settings.locale = next;
-      });
+      // Device-scoped: the language is a property of this browser, not of the
+      // person whose data is open.
+      setDeviceLocale(next);
       rerenderChrome();
       renderRoute();
     },
@@ -419,7 +456,38 @@ function mountShell(
 
   function rerenderChrome(): void {
     brand.textContent = t('app.title');
+    renderProfileSwitcher();
     renderNav();
+  }
+
+  /**
+   * Everything that has to follow the data being swapped underneath: the
+   * catalog and units are the previous person's, the route may point at a
+   * metric this profile has never measured, and the only honest feedback for
+   * "every number on screen just changed" is to say so.
+   */
+  function afterProfileChange(name: string): void {
+    catalog = createCatalog(store.getData());
+    reloadUnits();
+    rerenderChrome();
+    ctx.toast(t('profile.switched', { name }));
+    if (route.route === 'overview') renderRoute();
+    else ctx.navigate('overview');
+  }
+
+  /** The header switcher exists only from the second profile onwards (§1). */
+  function renderProfileSwitcher(): void {
+    switcherHost.replaceChildren();
+    const profiles = store.listProfiles();
+    if (profiles.length < 2) return;
+    switcherHost.append(
+      profileSwitcher({
+        profiles,
+        activeId: store.activeProfileId(),
+        t,
+        onSelect: (id) => void ctx.switchProfile(id),
+      }),
+    );
   }
 
   function renderNav(): void {

@@ -258,6 +258,42 @@ export interface Profile {
   createdAt: string;
 }
 
+/**
+ * Fixed avatar palette. A profile takes the next colour by creation order —
+ * there is no colour picker, so two profiles are told apart by name and colour
+ * without asking the user to decide anything.
+ */
+export const PROFILE_COLORS: readonly string[] = [
+  '#1f6e7d',
+  '#8a5a9c',
+  '#9a6b1f',
+  '#1e6e4c',
+  '#a8342a',
+  '#3d5157',
+];
+
+/**
+ * What the app knows about a profile WITHOUT opening its data blob: enough to
+ * draw a row in the switcher (name, colour, how much is in there) and to order
+ * the list by recency. Lives in the device's sealed profile directory, so a
+ * second profile costs one small record to read, not another full decrypt.
+ */
+export interface ProfileSummary {
+  id: ProfileId;
+  name: string;
+  createdAt: string;
+  /** One of {@link PROFILE_COLORS}, assigned at creation. */
+  color: string;
+  /** How many measurements the profile holds (kept in sync on every write). */
+  measurementCount: number;
+  /** `takenAt` of the oldest measurement, absent while the profile is empty. */
+  firstMeasuredAt?: string;
+  /** `takenAt` of the newest measurement, absent while the profile is empty. */
+  lastMeasuredAt?: string;
+  /** When this profile was last made active — the switcher's sort order. */
+  lastUsedAt: string;
+}
+
 // ---------------------------------------------------------------------------
 // Import pipeline data
 // ---------------------------------------------------------------------------

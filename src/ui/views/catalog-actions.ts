@@ -23,6 +23,7 @@ import {
   buildPackBaseName,
   sanitizeFilename,
 } from './export-model';
+import { exportProfileSlug, profileDisplayName } from './settings-model';
 import {
   PACK_FORMAT,
   PACK_VERSION,
@@ -255,7 +256,7 @@ export function renderCatalogTools(ctx: AppContext): HTMLElement {
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
   nameInput.className = 'settings-pack-filename';
-  nameInput.value = buildPackBaseName(ctx.now());
+  nameInput.value = buildPackBaseName(ctx.now(), packSlug(ctx));
   nameInput.setAttribute('aria-label', t('settings.packFilename'));
   nameInput.placeholder = t('settings.packFilenamePlaceholder');
   nameField.append(nameInput);
@@ -276,7 +277,7 @@ export function renderCatalogTools(ctx: AppContext): HTMLElement {
     // A pack must be self-contained: always ship the custom unit definitions.
     const units = customUnits(ctx);
     if (units.length > 0) pack.units = units;
-    const base = sanitizeFilename(nameInput.value, buildPackBaseName(ctx.now()));
+    const base = sanitizeFilename(nameInput.value, buildPackBaseName(ctx.now(), packSlug(ctx)));
     nameInput.value = base;
     downloadJson(pack, applyExtension(base, 'json'));
   });
@@ -286,4 +287,16 @@ export function renderCatalogTools(ctx: AppContext): HTMLElement {
   s.append(controls, tagFilter, listHost, toggles, nameField, exportBtn);
 
   return s;
+}
+
+/**
+ * The profile segment for a pack filename: a pack is a definition file, but it
+ * still leaves the app from ONE profile, and with several tracked people the
+ * name has to say which.
+ */
+function packSlug(ctx: AppContext): string | undefined {
+  return exportProfileSlug(
+    profileDisplayName(ctx.data().profile.name, ctx.t),
+    ctx.profiles().length,
+  );
 }

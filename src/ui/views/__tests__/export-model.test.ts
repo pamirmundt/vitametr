@@ -180,6 +180,25 @@ describe('editable filename helpers', () => {
     expect(buildSnapshotBaseName()).toBe('vitametr-stav');
   });
 
+  it('names the profile in the file when the device tracks several people', () => {
+    // A file leaves the app and is archived or handed over; with more than one
+    // person on the install its name has to say whose readings it holds.
+    expect(buildExportBaseName(NOW, 'romana-viskova')).toBe(
+      'vitametr-romana-viskova-export-2026-07-23',
+    );
+    expect(buildSnapshotBaseName('2025-01-01', 'romana-viskova')).toBe(
+      'vitametr-romana-viskova-stav-2025-01-01',
+    );
+    expect(buildPackBaseName(NOW, 'romana-viskova')).toBe(
+      'vitametr-romana-viskova-pack-2026-07-23',
+    );
+  });
+
+  it('leaves the name alone for a single profile — no churn where it adds nothing', () => {
+    expect(buildExportBaseName(NOW, undefined)).toBe('vitametr-export-2026-07-23');
+    expect(buildExportBaseName(NOW, '')).toBe('vitametr-export-2026-07-23');
+  });
+
   it('sanitizeFilename strips path separators, control chars and leading dots', () => {
     expect(sanitizeFilename('my/lab\\report', 'fallback')).toBe('mylabreport');
     expect(sanitizeFilename('...hidden', 'fallback')).toBe('hidden');

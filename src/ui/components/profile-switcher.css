@@ -1,0 +1,195 @@
+/* Header profile switcher — shown only when a second profile exists.
+
+   Desktop: a pill with avatar + name + caret, right-aligned in the header.
+   Phone (< 640px): the name would eat the width, so only the avatar and caret
+   remain; the button keeps a 44 px tap target and says the name in its
+   aria-label. The popover hangs from the button's right edge on desktop and
+   becomes a bottom sheet on the phone, matching the add-data action sheet. */
+
+.app-header-profile {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.profile-switcher {
+  position: relative;
+}
+
+.profile-switcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 220px;
+}
+@media (hover: hover) {
+  .profile-switcher-btn:hover {
+    background: var(--surface-2);
+  }
+}
+.profile-switcher-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.profile-switcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A caret that turns with the menu, so the state reads without the label. */
+.profile-switcher-caret {
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-top: 5px solid currentcolor;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  transition: transform 0.12s ease;
+}
+.profile-switcher-btn[aria-expanded='true'] .profile-switcher-caret {
+  transform: rotate(180deg);
+}
+
+.profile-avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--avatar-size, 24px);
+  height: var(--avatar-size, 24px);
+  border-radius: 50%;
+  color: #fff;
+  font-size: calc(var(--avatar-size, 24px) * 0.46);
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 260px;
+  max-width: min(320px, 92vw);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-hover);
+}
+.profile-menu[hidden] {
+  display: none;
+}
+.profile-menu-heading {
+  margin: 2px 8px 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.profile-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .profile-menu-item:hover {
+    background: var(--surface-2);
+  }
+}
+.profile-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.profile-menu-item.is-active {
+  background: var(--surface-2);
+}
+.profile-menu-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.profile-menu-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-menu-meta {
+  font-size: 0.78rem;
+}
+/* The tick is the only thing that says "this is the one you are looking at".
+   Drawn in CSS (a rotated corner) so it needs no icon font and no asset. */
+.profile-menu-check {
+  position: relative;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+.profile-menu-item.is-active .profile-menu-check::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: solid var(--accent);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* ---- Phone: avatar-only button, menu as a bottom sheet ---- */
+@media (max-width: 639px) {
+  .profile-switcher-btn {
+    height: 44px;
+    width: 44px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+  }
+  .profile-switcher-name {
+    display: none;
+  }
+  .profile-switcher-caret {
+    display: none;
+  }
+  .profile-menu {
+    position: fixed;
+    inset: auto 0 0 0;
+    max-width: none;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+  }
+}
+
+@media print {
+  .app-header-profile {
+    display: none;
+  }
+}

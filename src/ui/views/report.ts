@@ -582,9 +582,19 @@ export const reportView: View = {
           : subsetLabel
             ? t('report.subsetTitle', { label: subsetLabel })
             : t('report.title');
-      meta.textContent =
-        `${t('report.profile')}: ${profileDisplayName(data.profile.name, t)} · ` +
-        t('report.generated', { date: formatDateTime(ctx.now(), 'datetime') });
+      // Whose sheet this is matters more once several people are tracked, so the
+      // name gets a line of its own instead of sharing one with the timestamp.
+      const profileLine = `${t('report.profile')}: ${profileDisplayName(data.profile.name, t)}`;
+      const generated = t('report.generated', { date: formatDateTime(ctx.now(), 'datetime') });
+      if (ctx.profiles().length > 1) {
+        meta.replaceChildren(
+          textEl('strong', profileLine, 'report-profile-name'),
+          document.createElement('br'),
+          document.createTextNode(generated),
+        );
+      } else {
+        meta.textContent = `${profileLine} · ${generated}`;
+      }
       dateInput.hidden = mode !== 'snapshot';
       for (const { id, btn } of modeBtns) {
         const active = id === mode;

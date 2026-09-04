@@ -219,13 +219,13 @@ export function canExport(selectedMetricIds: readonly MetricId[]): boolean {
  * the data-export wizard and the metric-pack export dialog, which pre-fill an
  * editable filename input with the returned value.
  */
-export function buildExportBaseName(nowIso?: string): string {
-  return datedBaseName('vitametr-export', nowIso);
+export function buildExportBaseName(nowIso?: string, profileSlug?: string): string {
+  return datedBaseName('vitametr-export', nowIso, profileSlug);
 }
 
 /** A dated base filename for a metric-pack export, e.g. `vitametr-pack-2026-07-23`. */
-export function buildPackBaseName(nowIso?: string): string {
-  return datedBaseName('vitametr-pack', nowIso);
+export function buildPackBaseName(nowIso?: string, profileSlug?: string): string {
+  return datedBaseName('vitametr-pack', nowIso, profileSlug);
 }
 
 /**
@@ -233,13 +233,22 @@ export function buildPackBaseName(nowIso?: string): string {
  * `vitametr-stav-2026-07-23`. The date is the as-of day (already a calendar
  * date); when it is absent or unparseable the date segment is dropped.
  */
-export function buildSnapshotBaseName(asOfIso?: string): string {
-  return datedBaseName('vitametr-stav', asOfIso);
+export function buildSnapshotBaseName(asOfIso?: string, profileSlug?: string): string {
+  return datedBaseName('vitametr-stav', asOfIso, profileSlug);
 }
 
-function datedBaseName(prefix: string, nowIso?: string): string {
+/**
+ * `vitametr[-<profile>]-<what>[-<date>]`. The profile segment is added only when
+ * the device tracks several people: with one profile it would say nothing and
+ * would rename every file for everyone who never asked for profiles. The slug
+ * is dash-separated to match the backup filename Settings already produces —
+ * two spellings of the same idea in one app would be worse than either.
+ */
+function datedBaseName(prefix: string, nowIso?: string, profileSlug?: string): string {
+  const [app, ...rest] = prefix.split('-');
+  const named = profileSlug ? [app, profileSlug, ...rest].join('-') : prefix;
   const day = nowIso && /^\d{4}-\d{2}-\d{2}/.test(nowIso) ? nowIso.slice(0, 10) : '';
-  return day ? `${prefix}-${day}` : prefix;
+  return day ? `${named}-${day}` : named;
 }
 
 /**

@@ -58,6 +58,10 @@ export const STR = {
     tsh: 'TSH',
     range: 'Range',
     editSelection: 'Edit selection',
+    addProfile: /Add profile/,
+    createAndSwitch: 'Create and switch',
+    profilesSection: 'Profiles',
+    secondProfileName: 'Ellie',
   },
   cs: {
     addValues: 'Zadat hodnoty',
@@ -83,5 +87,9 @@ export const STR = {
     tsh: 'TSH',
     range: 'Meze',
     editSelection: 'Upravit výběr',
+    addProfile: /Přidat profil/,
+    createAndSwitch: 'Vytvořit a přepnout',
+    profilesSection: 'Profily',
+    secondProfileName: 'Eliška',
   },
 };

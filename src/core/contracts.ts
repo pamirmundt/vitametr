@@ -10,6 +10,8 @@ import type {
   Metric,
   MetricId,
   ProfileData,
+  ProfileId,
+  ProfileSummary,
   ProposedMeasurement,
   SourceId,
   UnitDef,
@@ -209,6 +211,46 @@ export interface StoreApi {
   mode(): Promise<'encrypted' | 'plaintext'>;
   /** Delete all local data irreversibly. */
   wipe(): Promise<void>;
+
+  // -- Profiles (several tracked people on one device) ----------------------
+  //
+  // Data is strictly per profile; the passphrase, and everything else about the
+  // environment, belongs to the DEVICE. One unlock therefore opens every
+  // profile, and switching never returns to the lock screen.
+
+  /**
+   * Every profile on this device, newest-used first, without opening any data
+   * blob. Reads the in-memory directory, so it is safe to call while rendering.
+   * Throws when locked — the directory is sealed like everything else.
+   */
+  listProfiles(): ProfileSummary[];
+  /** The profile `getData()` and `mutate()` operate on. Throws when locked. */
+  activeProfileId(): ProfileId;
+  /**
+   * Create a profile and make it active. `inheritFrom` copies that profile's
+   * settings and metric definitions (units, tags, enabled packs) — never its
+   * measurements, and never its sources.
+   */
+  createProfile(options: CreateProfileOptions): Promise<ProfileData>;
+  /**
+   * Make another profile active: flushes the current profile's pending write
+   * first, then loads and migrates the target. No passphrase is needed — the
+   * session key is the device's.
+   */
+  switchProfile(id: ProfileId): Promise<ProfileData>;
+  /** Rename a profile (active or not); the name lives in both blob and directory. */
+  renameProfile(id: ProfileId, name: string): Promise<void>;
+  /**
+   * Delete a profile's blob and directory entry, irreversibly. Refuses the
+   * ACTIVE profile (switch first) and the LAST one (that is "delete all data").
+   */
+  deleteProfile(id: ProfileId): Promise<void>;
+}
+
+export interface CreateProfileOptions {
+  name: string;
+  /** Copy settings + metric definitions from this profile (never measurements). */
+  inheritFrom?: ProfileId;
 }
 
 /** Pure functions ProfileData(vN) -> ProfileData(vN+1), applied in order on unlock. */

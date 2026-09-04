@@ -68,9 +68,12 @@ function addSource(store: { mutate: (fn: (d: ProfileData) => void) => void }, na
   });
 }
 
-/** Read and identity-decode the persisted blob directly from a backend. */
-async function readPersisted(backend: KvBackend): Promise<ProfileData> {
-  const sealed = (await backend.get('blobs', 'default')) as Uint8Array;
+/**
+ * Read and identity-decode a profile's persisted blob directly from a backend.
+ * Blobs are keyed by ProfileId (one blob per tracked person).
+ */
+async function readPersisted(backend: KvBackend, id: string): Promise<ProfileData> {
+  const sealed = (await backend.get('blobs', id)) as Uint8Array;
   return JSON.parse(new TextDecoder().decode(sealed)) as ProfileData;
 }
 
@@ -141,23 +144,23 @@ describe('createStore', () => {
     const backend = createMemoryBackend();
     const store = createStore(backend, createFakeCrypto());
 
-    await store.init({ profileName: 'Dave' });
+    const { profile } = await store.init({ profileName: 'Dave' });
 
     // Two quick mutations, no explicit flush yet.
     addSource(store, 'One');
     addSource(store, 'Two');
 
     // Debounce not elapsed → blob still reflects the freshly-init'd empty state.
-    expect((await readPersisted(backend)).sources).toEqual([]);
+    expect((await readPersisted(backend, profile.id)).sources).toEqual([]);
 
     // Let the debounce fire; both mutations land in a single persisted write.
     await vi.advanceTimersByTimeAsync(500);
-    expect((await readPersisted(backend)).sources.map((s) => s.name)).toEqual(['One', 'Two']);
+    expect((await readPersisted(backend, profile.id)).sources.map((s) => s.name)).toEqual(['One', 'Two']);
 
     // flush() forces an immediate write without waiting for the timer.
     addSource(store, 'Three');
     await store.flush();
-    expect((await readPersisted(backend)).sources.map((s) => s.name)).toEqual([
+    expect((await readPersisted(backend, profile.id)).sources.map((s) => s.name)).toEqual([
       'One',
       'Two',
       'Three',

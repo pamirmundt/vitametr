@@ -21,6 +21,7 @@
  */
 
 import type { AppContext, View } from '../app-context';
+import { profileDisplayName } from './settings-model';
 import { formatDateTime, formatNumber, plural } from '../../i18n/index';
 import type { StringKey } from '../../i18n/index';
 import './review.css';
@@ -148,6 +149,17 @@ export const reviewView: View = {
     const title = el('h1');
     title.textContent = ctx.t('review.title');
     container.append(title);
+
+    // Importing into the wrong person is the most expensive mistake this
+    // feature can cause, and it is invisible afterwards — so the target is
+    // named BEFORE anything is confirmed, whenever there is more than one.
+    if (ctx.profiles().length > 1) {
+      const target = el('p', 'review-target');
+      target.textContent = ctx.t('review.targetProfile', {
+        name: profileDisplayName(ctx.data().profile.name, ctx.t),
+      });
+      container.append(target);
+    }
 
     // Snapshot the provenance for this batch (the click handler runs later).
     const meta = pendingMeta;

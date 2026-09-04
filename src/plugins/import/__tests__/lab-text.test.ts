@@ -481,3 +481,71 @@ describe('parseLabLines — national-convention result sheet', () => {
     expect(p.metric).toBe('builtin:egfr' as MetricId);
   });
 });
+
+describe('parseLabLines — a document holding several collection dates', () => {
+  /**
+   * A patient-portal overview is one document with a section per draw. Stamping
+   * every row with the first date silently rewrites the history, which is worse
+   * than refusing the file — so each labelled draw date applies to the rows that
+   * FOLLOW it, until the next one.
+   */
+  const overview = [
+    'Laboratorní výsledky — přehled',
+    'Pacientka: Testovací Vzor, nar. 4.4.1977',
+    'Datum odběru: 27.5.2026',
+    'TSH 8,14 mIU/l 0,27 - 4,2',
+    'Datum odběru: 10.9.2025',
+    'TSH 1,06 mIU/l 0,27 - 4,2',
+    'Datum odběru: 13.2.2025',
+    'TSH 5,4 mIU/l 0,27 - 4,2',
+  ];
+
+  it('dates each section from its own header', () => {
+    const rows = parseLabLines(overview, catalog());
+    expect(rows.map((r) => [r.value, r.takenAt?.slice(0, 10)])).toEqual([
+      [8.14, '2026-05-27'],
+      [1.06, '2025-09-10'],
+      [5.4, '2025-02-13'],
+    ]);
+  });
+
+  it('never takes the birth date for a section date', () => {
+    const rows = parseLabLines(overview, catalog());
+    expect(rows.every((r) => !r.takenAt?.startsWith('1977'))).toBe(true);
+  });
+
+  it('leaves a single-draw sheet exactly as it was', () => {
+    const sheet = [
+      'Výsledkový list',
+      'Pacient: Testovací Vzor (nar. 1980)',
+      'Odběr: 10.02.2023 07:45',
+      'Glukóza 5,4 mmol/l 3,9 - 5,6',
+      'Cholesterol celkový 5,9 mmol/l 0,0 - 5,0',
+    ];
+    const rows = parseLabLines(sheet, catalog());
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.takenAt?.slice(0, 10)))).toEqual(new Set(['2023-02-10']));
+  });
+
+  it('does not let a print stamp re-date the rows under it', () => {
+    const sheet = [
+      'Odběr: 10.02.2023',
+      'Glukóza 5,4 mmol/l 3,9 - 5,6',
+      'Vytištěno: 15.03.2023',
+      'Cholesterol celkový 5,9 mmol/l 0,0 - 5,0',
+    ];
+    const rows = parseLabLines(sheet, catalog());
+    expect(new Set(rows.map((r) => r.takenAt?.slice(0, 10)))).toEqual(new Set(['2023-02-10']));
+  });
+
+  it('keeps the header date for rows that come before the first section', () => {
+    const sheet = [
+      'Odběr: 10.02.2023',
+      'Glukóza 5,4 mmol/l 3,9 - 5,6',
+      'Datum odběru: 14.08.2023',
+      'Cholesterol celkový 5,9 mmol/l 0,0 - 5,0',
+    ];
+    const rows = parseLabLines(sheet, catalog());
+    expect(rows.map((r) => r.takenAt?.slice(0, 10))).toEqual(['2023-02-10', '2023-08-14']);
+  });
+});

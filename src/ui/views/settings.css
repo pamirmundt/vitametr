@@ -632,3 +632,105 @@ select.settings-inline-select {
   font-weight: 600;
 }
 .settings-site a:hover { text-decoration: underline; }
+
+/* ---- Profiles (Settings → Profiles) --------------------------------------
+   One person keeping records for several people: a row per profile with the
+   one fact that tells similar names apart (how much is in there, since when),
+   and inline forms for add / rename / delete so nothing opens a dialog. */
+
+.profiles-list {
+  display: flex;
+  flex-direction: column;
+}
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* The same gutters as .settings-row, so the section lines up with the rest
+     of the card instead of running into its edges. */
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.profile-row:last-child {
+  border-bottom: none;
+}
+.profile-row-text {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.profile-row-nameline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.profile-row-name {
+  font-weight: 700;
+}
+.profile-row-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.profile-row-meta {
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+.profile-row-actions {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.profile-row-delete:not(:disabled) {
+  color: var(--danger);
+}
+.profile-row-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 18px;
+}
+.profile-form .settings-note {
+  padding: 0;
+}
+.profile-form input[type='text'] {
+  width: 100%;
+  font: inherit;
+  padding: 10px 12px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+.profile-form--danger input[type='text'] {
+  border-color: var(--danger);
+}
+.profile-form-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.profile-inherit {
+  gap: 12px;
+}
+
+.profiles-add {
+  padding: 4px 18px 8px;
+}
+.profiles-add-btn {
+  color: var(--accent);
+  font-weight: 700;
+}

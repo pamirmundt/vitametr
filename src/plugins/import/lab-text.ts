@@ -136,6 +136,18 @@ const NON_DRAW_LINE_RE =
   /datum\s+narozen[íi]|\bnar\.|date\s+of\s+birth|\bdob\b|sestaveno|vyd[áa]no|vyti[šs]t[ěe]no|p[řr]ijato|received|printed|reported/i;
 
 /**
+ * The draw date a line INTRODUCES, if any: a labelled collection date on a line
+ * that is not a birth-date or print stamp. Used to re-date the rows that follow
+ * it, so one document may carry several draws (see {@link parseLabLines}).
+ */
+function findSectionDate(line: string): { iso: string; precision: 'date' | 'datetime' } | undefined {
+  if (NON_DRAW_LINE_RE.test(line)) return undefined;
+  const match = DRAW_DATE_RE.exec(line);
+  if (!match) return undefined;
+  return parseDateTime(match[1]);
+}
+
+/**
  * Find the document's draw date: a labelled one anywhere in the document, else
  * the first date on a line that is not a birth-date/print-stamp line.
  */
@@ -467,8 +479,12 @@ function parseUnitlessLine(
 
 /**
  * Parse lab-sheet text lines into measurement proposals. Pure: the same input
- * always yields the same output. The draw date is discovered once and shared
- * by every proposal (a lab sheet reflects a single blood draw).
+ * A lab's own result sheet reflects ONE blood draw, and its date is discovered
+ * once from the header. A patient-portal overview, though, is a single document
+ * with a section per draw — so a labelled collection date encountered on the way
+ * re-dates the rows that follow it, until the next one. Stamping such a file
+ * with a single date would not fail loudly; it would quietly rewrite the user's
+ * history into one day, which is the worst outcome available.
  *
  * Each line is tried as a numeric analyte row first, then as a qualitative
  * (dipstick) row, then as a unitless numeric row; only the first that matches
@@ -476,9 +492,17 @@ function parseUnitlessLine(
  * artefacts are stripped for reading, never from the record.
  */
 export function parseLabLines(lines: string[], catalog: Catalog): ProposedMeasurement[] {
-  const date = findDocumentDate(lines);
+  // The header's date covers everything until a section says otherwise; on a
+  // one-draw sheet nothing ever does, so the behaviour is unchanged there.
+  let date = findDocumentDate(lines);
   const proposals: ProposedMeasurement[] = [];
   for (const line of lines) {
+    const section = findSectionDate(line);
+    if (section) {
+      date = section;
+      // A date header is not a result row — nothing else to read from it.
+      continue;
+    }
     const cleaned = stripEvaluationColumn(line);
     const proposal =
       parseLine(cleaned, catalog, date) ??

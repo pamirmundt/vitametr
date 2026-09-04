@@ -76,6 +76,16 @@ export function slugify(name: string): string {
 }
 
 /**
+ * The slug an export filename should carry for the profile whose data it holds,
+ * or `undefined` when the device tracks a single person and the name would say
+ * nothing. Pure: the caller passes the count and the name.
+ */
+export function exportProfileSlug(profileName: string, profileCount: number): string | undefined {
+  if (profileCount < 2) return undefined;
+  return slugify(profileName) || undefined;
+}
+
+/**
  * Build a download filename for an export, e.g.
  * `vitametr-my-profile-json-backup.json`. Carries no timestamp on purpose —
  * the model has no injected clock and guessing one is disallowed.
