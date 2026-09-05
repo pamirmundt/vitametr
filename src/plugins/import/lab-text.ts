@@ -298,32 +298,33 @@ function parseLine(
 // ---------------------------------------------------------------------------
 
 /**
- * Recognized qualitative result phrases (urine dipstick and semi-quant
- * screens). Compared case- and diacritics-insensitively. This list governs
- * only VALUE validity — a row becomes a proposal solely when its NAME resolves
- * to a text/enum/multi metric, so prose lines can never slip through here.
+ * Qualitative results, as CONCEPTS rather than spellings. Each entry is one
+ * meaning plus the other ways labs write it; the first form is the canonical
+ * one a value is recorded under, so one lab's "Neg." and another's "negativní"
+ * stay one line in the history instead of two.
+ *
+ * The list is not a gate — a row becomes a proposal because its NAME resolves
+ * to a qualitative metric, not because its value appears here. It only supplies
+ * canonical spellings, and abbreviations resolve by prefix, so a shortening
+ * nobody has written down yet still lands on the right concept.
  */
-const QUALITATIVE_PHRASES: readonly string[] = [
-  'bez nálezu',
-  'v mezích',
-  'nenalezeno',
-  'slabě pozitivní',
-  'silně pozitivní',
-  'negativní',
-  'negativ',
-  'pozitivní',
-  'pozitiv',
-  'stopy',
-  'stopově',
-  'normální',
-  'zvýšený',
-  'snížený',
-  'negative',
-  'positive',
-  'trace',
-  'normal',
-  'abnormal',
+const QUALITATIVE_CONCEPTS: readonly (readonly string[])[] = [
+  ['negativní', 'negativ', 'negative'],
+  ['pozitivní', 'pozitiv', 'positive'],
+  ['slabě pozitivní', 'weakly positive'],
+  ['silně pozitivní', 'strongly positive'],
+  ['stopy', 'stopově', 'trace'],
+  ['normální', 'normal'],
+  ['abnormální', 'abnormal'],
+  ['bez nálezu'],
+  ['v mezích'],
+  ['nenalezeno'],
+  ['zvýšený'],
+  ['snížený'],
 ];
+
+/** Every accepted spelling, for the exact-match pass. */
+const QUALITATIVE_PHRASES: readonly string[] = QUALITATIVE_CONCEPTS.flat();
 
 /** A dipstick plus-grade token: `+`…`++++` or `1+`…`4+`. */
 const PLUS_GRADE_RE = /^(?:\+{1,4}|[1-4]\+)$/;
@@ -335,28 +336,102 @@ function fold(s: string): string {
 
 /**
  * Interpret the tokens after a resolved metric name as a qualitative value.
- * For enum/multi metrics only the metric's own `enumValues` are accepted; for
- * a text metric a recognized qualitative phrase or a plus-grade token. Returns
- * the value in its canonical/original spelling, or undefined when the tokens
- * are not a qualitative value (so the row is left for review — never guessed).
+ *
+ * The row has already passed the only gate that matters: its NAME resolves to a
+ * metric that is qualitative BY DEFINITION, so whatever follows is that
+ * metric's value. Requiring the word to appear in a list on top of that gains
+ * nothing and loses data — a lab printing "Neg." instead of "negativní" had its
+ * whole dipstick block dropped in silence, and no dictionary can be kept ahead
+ * of every lab's abbreviations. So: any short, non-numeric token is a value.
+ *
+ * Known wordings are still recorded in their canonical spelling, so one lab's
+ * "Neg." and another's "negativní" do not split a metric's history in two. That
+ * is done by unambiguous PREFIX, which needs no list of abbreviations: "neg"
+ * opens only "negativní", while "n" opens two words and is therefore kept as
+ * written rather than guessed.
  */
 function matchQualitativeValue(valueTokens: string[], metric: Metric): string | undefined {
   if (valueTokens.length === 0) return undefined;
-  if (metric.valueType === 'enum' || metric.valueType === 'multi') {
-    const allowed = metric.enumValues ?? [];
-    for (const n of [2, 1]) {
-      const phrase = valueTokens.slice(0, n).join(' ');
-      const hit = allowed.find((v) => fold(v) === fold(phrase));
-      if (hit) return hit;
-    }
-    return undefined;
-  }
+  const vocabulary: readonly (readonly string[])[] =
+    metric.valueType === 'enum' || metric.valueType === 'multi'
+      ? (metric.enumValues ?? []).map((v) => [v])
+      : QUALITATIVE_CONCEPTS;
+
+  // Longest phrase first: "slabě pozitivní" must win over "slabě".
   for (const n of [2, 1]) {
+    if (valueTokens.length < n) continue;
     const phrase = valueTokens.slice(0, n).join(' ');
-    if (QUALITATIVE_PHRASES.some((q) => fold(q) === fold(phrase))) return phrase;
+    const canonical = canonicalQualitative(phrase, vocabulary);
+    if (canonical !== undefined) return canonical;
   }
   if (PLUS_GRADE_RE.test(valueTokens[0])) return valueTokens[0];
+  // A word nobody recognises is NOT attached — silently writing "žlutá" into a
+  // urine-glucose series would corrupt it where no one can see. The row is
+  // offered unresolved instead (see parseQualitativeLine): visible, one click
+  // to accept or skip, and nothing lost either way.
   return undefined;
+}
+
+/**
+ * The canonical spelling of a qualitative phrase: an exact match, else the ONE
+ * vocabulary entry it abbreviates. `undefined` when neither applies — including
+ * when a shortening fits several entries, because picking one would be a guess.
+ */
+function canonicalQualitative(
+  phrase: string,
+  vocabulary: readonly (readonly string[])[],
+): string | undefined {
+  const folded = fold(phrase).replace(/\.+$/, '');
+  if (folded === '') return undefined;
+  // Written out in full: record it under that concept's canonical spelling.
+  for (const concept of vocabulary) {
+    if (concept.some((form) => fold(form) === folded)) return concept[0];
+  }
+  // An abbreviation is only an abbreviation from three letters up; below that
+  // ("n", "p") the intent is anybody's guess.
+  if (folded.length < 3) return undefined;
+  const opened = vocabulary.filter((concept) =>
+    concept.some((form) => fold(form).startsWith(folded)),
+  );
+  // Exactly one MEANING may open with it — several spellings of that same
+  // meaning are not an ambiguity, which is the whole point of grouping them.
+  return opened.length === 1 ? opened[0][0] : undefined;
+}
+
+/**
+ * Whether an unrecognised token may stand as a value: short, wordlike and not a
+ * number (a number belongs to the numeric path, which runs first anyway).
+ */
+function acceptableQualitativeToken(token: string): boolean {
+  const t = token.trim();
+  if (t.length === 0 || t.length > 20) return false;
+  if (/\d/.test(t)) return false;
+  return /\p{L}/u.test(t);
+}
+
+/**
+ * A row that clearly names an analyte and clearly carries a word for a value,
+ * but whose value this build cannot attach to that metric. It reaches review as
+ * unresolved so the user can map it (or create their own metric) — the one
+ * thing that must never happen is for it to disappear without a trace.
+ */
+function unattachedQualitative(
+  name: string,
+  token: string,
+  rawText: string,
+  date: { iso: string; precision: 'date' | 'datetime' } | undefined,
+): ProposedMeasurement {
+  const proposal: ProposedMeasurement = {
+    metric: { unresolvedName: name },
+    textValue: token,
+    confidence: 'low',
+    rawText,
+  };
+  if (date) {
+    proposal.takenAt = date.iso;
+    proposal.timePrecision = date.precision;
+  }
+  return proposal;
 }
 
 /**
@@ -385,12 +460,18 @@ function parseQualitativeLine(
     if (!('metricId' in resolved)) continue;
     const metric = catalog.byId(resolved.metricId);
     if (!metric) continue;
-    // A numeric metric is not a qualitative row; a shorter prefix would only be
-    // a worse match, so stop rather than guess.
-    if (metric.valueType === 'number') return undefined;
 
-    const value = matchQualitativeValue(tokens.slice(i), metric);
-    if (value === undefined) return undefined;
+    const valueTokens = tokens.slice(i);
+    // A qualitative word on a NUMERIC metric is never that metric's value (a
+    // dipstick "negativní" is not grams per litre). Dropping the row in silence
+    // is the wrong answer though — the user would never learn the line existed —
+    // so it goes to review unattached, with the source's own wording.
+    const value = metric.valueType === 'number' ? undefined : matchQualitativeValue(valueTokens, metric);
+    if (value === undefined) {
+      return acceptableQualitativeToken(valueTokens[0])
+        ? unattachedQualitative(splitAnalyteName(name).name, valueTokens[0], rawText, date)
+        : undefined;
+    }
 
     const proposal: ProposedMeasurement = {
       metric: metric.id,

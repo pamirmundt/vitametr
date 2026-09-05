@@ -294,18 +294,27 @@ describe('parseLabLines — qualitative (dipstick) rows', () => {
     expect(p.textValue).toBe('pozitivní');
   });
 
-  it('never invents a text value for a numeric metric (spec §16)', () => {
-    // Blood glucose is numeric; a stray qualitative token must NOT be attached.
-    expect(parseLabLines(['Glukóza negativní'], catalog())).toHaveLength(0);
+  it('never attaches a text value to a numeric metric (spec §16)', () => {
+    // Blood glucose is numeric; a stray qualitative token must NOT be attached
+    // to it — but it must not vanish either (owner's rule, 5. 9. 2026), so the
+    // row is offered unresolved and the user decides.
+    const [p] = parseLabLines(['Glukóza negativní'], catalog());
+    expect(p.metric).toEqual({ unresolvedName: 'Glukóza' });
+    expect(p.textValue).toBe('negativní');
   });
 
   it('ignores prose lines whose name does not resolve', () => {
     expect(parseLabLines(['Poznámka k odběru negativní'], catalog())).toHaveLength(0);
   });
 
-  it('leaves a resolved text metric out when the value is not qualitative', () => {
-    // Name resolves, but "žlutá" is not a recognized qualitative token.
-    expect(parseLabLines(['Glukóza v moči žlutá zakalená'], catalog())).toHaveLength(0);
+  it('does not attach an unknown word to an enum metric, but still offers it', () => {
+    // Name resolves, but "žlutá" is not in this metric's vocabulary — most
+    // likely a misread line. It is therefore NOT attached to urine glucose; it
+    // is offered unresolved so the row cannot vanish unnoticed (owner's rule,
+    // 5. 9. 2026: nothing may be lost silently).
+    const [p] = parseLabLines(['Glukóza v moči žlutá zakalená'], catalog());
+    expect(p.metric).toEqual({ unresolvedName: 'Glukóza v moči' });
+    expect(p.textValue).toBe('žlutá');
   });
 });
 
@@ -547,5 +556,74 @@ describe('parseLabLines — a document holding several collection dates', () => 
     ];
     const rows = parseLabLines(sheet, catalog());
     expect(rows.map((r) => r.takenAt?.slice(0, 10))).toEqual(['2023-02-10', '2023-08-14']);
+  });
+});
+
+describe('parseLabLines — an abbreviation nobody has seen before', () => {
+  const one = (line: string) => parseLabLines([line], catalog());
+
+  /**
+   * The gate that keeps prose out is the NAME: a row only becomes a proposal
+   * when its name resolves to a metric that is qualitative by definition. Once
+   * past that gate the value list adds nothing but fragility — a lab that
+   * prints "Neg." instead of "negativní" used to have its whole dipstick block
+   * dropped in silence, which is worse than any wrong guess.
+   */
+  it('accepts a shortened form and records it in the canonical spelling', () => {
+    for (const [line, expected] of [
+      ['Glukóza v moči Neg.', 'negativní'],
+      ['Ketolátky v moči neg', 'negativní'],
+      ['Urobilinogen v moči Norm.', 'normální'],
+      ['Krev v moči pozit.', 'pozitivní'],
+    ] as const) {
+      const [p] = one(line);
+      expect(p, line).toBeDefined();
+      expect(p.textValue, line).toBe(expected);
+    }
+  });
+
+  it('never drops a row it cannot interpret — it goes to review instead', () => {
+    // Invented on purpose: no dictionary will ever contain it. The value is not
+    // attached to the metric (an enum has a closed vocabulary), but the row is
+    // still offered, with the source's own wording, for the user to decide.
+    const [p] = one('Glukóza v moči Zkalená');
+    expect(p).toBeDefined();
+    expect(p.metric).toEqual({ unresolvedName: 'Glukóza v moči' });
+    expect(p.textValue).toBe('Zkalená');
+  });
+
+  it('offers a dipstick word on a NUMERIC metric instead of swallowing it', () => {
+    // "Bílkovina v moči" is a quantitative metric (g/l) in the catalog, but labs
+    // also report it on a dipstick. "negativní" is not grams per litre, so it is
+    // not attached — and not lost either.
+    const [p] = one('Bílkovina v moči negativní');
+    expect(p).toBeDefined();
+    expect(p.metric).toEqual({ unresolvedName: 'Bílkovina v moči' });
+    expect(p.textValue).toBe('negativní');
+  });
+
+  it('does not resolve an ambiguous shortening', () => {
+    // "n" could open "negativní" or "normální"; canonicalising it would be a
+    // guess, so the row goes to review with the token as written.
+    const [p] = one('Urobilinogen v moči n');
+    expect(p).toBeDefined();
+    expect(p.textValue).toBe('n');
+    expect(p.metric).toEqual({ unresolvedName: 'Urobilinogen v moči' });
+  });
+
+  it('still refuses to attach a qualitative token to a NUMERIC metric', () => {
+    // Blood glucose is a number; "negativní" there is a misread, not a value —
+    // so it is offered for review rather than attached or thrown away.
+    for (const line of ['Glukóza negativní', 'Glukóza Neg.']) {
+      const [p] = one(line);
+      expect(p.metric, line).toEqual({ unresolvedName: 'Glukóza' });
+    }
+  });
+
+  it('does not turn a number into a qualitative value', () => {
+    // A numeric token on a text metric belongs to the numeric path, not here.
+    const [p] = one('pH moči 5,0');
+    expect(p.value).toBe(5);
+    expect(p.textValue).toBeUndefined();
   });
 });
