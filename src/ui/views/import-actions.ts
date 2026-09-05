@@ -23,6 +23,8 @@ import { detectFormat, isZip } from '../../plugins/detect';
 import { listZipEntries, openZipEntry, type ZipEntry } from '../../plugins/import/zip';
 import { parsePack, packMetricToSpec } from '../../plugins/import/pack';
 import { setPendingImport, type PendingImportMeta } from './review';
+import { readBackupFile } from '../../plugins/import/json-backup';
+import { startRestore } from './restore-flow';
 import { setPendingCsv } from './import-csv';
 import type { ReviewItem } from '../../core/contracts';
 import { shouldShowImportFilter } from './import-filter-model';
@@ -120,13 +122,19 @@ function clearError(node: HTMLElement): void {
 // Import runners
 // ---------------------------------------------------------------------------
 
-export async function runImport(ctx: AppContext, file: File): Promise<void> {
+/**
+ * A backup is the one import that can reach past the readings — it can
+ * reconfigure a profile and create people — so it never goes straight to
+ * review. It stops at the restore screen first, which says what it is about to
+ * do and writes nothing until confirmed.
+ */
+export async function runImport(ctx: AppContext, file: File, password?: string): Promise<void> {
   const plugin = importPluginById('json-backup');
   if (!plugin) return;
   const meta: PendingImportMeta = { pluginId: 'json-backup', fileName: file.name };
   try {
-    const proposals = await plugin.parse({ kind: 'file', file }, { catalog: ctx.catalog() });
-    handOff(ctx, proposals, meta);
+    const backup = await readBackupFile({ kind: 'file', file }, password);
+    startRestore(ctx, backup, file.name);
   } catch (err) {
     // An encrypted backup with no password → ask for it in a modal, then retry.
     if (err instanceof PassphraseRequiredError) {
@@ -134,6 +142,14 @@ export async function runImport(ctx: AppContext, file: File): Promise<void> {
         requiredKey: 'backup.passwordRequired',
         enterKey: 'backup.enterPassword',
       }, meta);
+      return;
+    }
+    // A backup from a newer build: say so in words. The plugin throws a
+    // developer-shaped Error; the user gets a sentence and a way forward.
+    const message = err instanceof Error ? err.message : '';
+    const newer = /schema version (\d+) is newer/i.exec(message);
+    if (newer) {
+      ctx.toast(ctx.t('restore.errorNewerSchema', { version: newer[1] }), 'error');
       return;
     }
     throw err;
@@ -392,6 +408,14 @@ function renderImportPasswordPrompt(
     confirm.disabled = true;
     void (async () => {
       try {
+        // A backup goes back through its own path, so the restore screen still
+        // gets the whole file rather than just its readings.
+        if (plugin.id === 'json-backup') {
+          const password = pwInput.value;
+          dialog.close();
+          await runImport(ctx, file, password);
+          return;
+        }
         const proposals = await plugin.parse(
           { kind: 'file', file },
           {

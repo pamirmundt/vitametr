@@ -73,6 +73,19 @@ describe('profileDisplayName', () => {
 });
 
 describe('buildExportFilename', () => {
+  it('dates the file when a day is given', () => {
+    expect(
+      buildExportFilename('json-backup', 'My Profile', { day: '2026-09-05T10:00:00Z' }),
+    ).toBe('vitametr-my-profile-json-backup-2026-09-05.json');
+  });
+
+  it('names no one when the file holds every profile', () => {
+    // Naming one of several would misdescribe what is inside.
+    expect(
+      buildExportFilename('json-backup', 'My Profile', { day: '2026-09-05', allProfiles: true }),
+    ).toBe('vitametr-zaloha-2026-09-05.json');
+  });
+
   it('builds a json backup filename', () => {
     expect(buildExportFilename('json-backup', 'My Profile')).toBe(
       'vitametr-my-profile-json-backup.json',

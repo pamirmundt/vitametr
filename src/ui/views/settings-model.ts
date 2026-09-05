@@ -86,13 +86,26 @@ export function exportProfileSlug(profileName: string, profileCount: number): st
 }
 
 /**
- * Build a download filename for an export, e.g.
- * `vitametr-my-profile-json-backup.json`. Carries no timestamp on purpose —
- * the model has no injected clock and guessing one is disallowed.
+ * Build a download filename for an export.
+ *
+ * One profile: `vitametr-<slug>-json-backup-<date>.json` — the person it is
+ * about, then when it was taken, because a folder of backups is otherwise
+ * unreadable. Every profile: `vitametr-zaloha-<date>.json`, with no name,
+ * because naming one of several would be a lie about what is inside.
+ *
+ * `day` is injected (YYYY-MM-DD); absent it is simply left out — this model has
+ * no clock and never guesses one.
  */
-export function buildExportFilename(kind: ExportKind, profileName: string): string {
+export function buildExportFilename(
+  kind: ExportKind,
+  profileName: string,
+  options: { day?: string; allProfiles?: boolean } = {},
+): string {
+  const date = options.day && /^\d{4}-\d{2}-\d{2}/.test(options.day) ? options.day.slice(0, 10) : '';
+  const suffix = date ? `-${date}` : '';
+  if (options.allProfiles) return `vitametr-zaloha${suffix}.${EXPORT_EXTENSION[kind]}`;
   const slug = slugify(profileName) || 'profile';
-  return `vitametr-${slug}-${kind}.${EXPORT_EXTENSION[kind]}`;
+  return `vitametr-${slug}-${kind}${suffix}.${EXPORT_EXTENSION[kind]}`;
 }
 
 // ---------------------------------------------------------------------------

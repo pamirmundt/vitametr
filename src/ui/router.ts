@@ -15,6 +15,8 @@ const ROUTES: readonly Route[] = [
   'import-filter',
   'export',
   'review',
+  'restore',
+  'restore-done',
   'report',
   'compare',
   'metrics-manage',

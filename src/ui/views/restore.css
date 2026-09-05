@@ -1,0 +1,171 @@
+/* Restore from a backup — the "what will happen" screen and its summary.
+
+   Both are screens, not toasts: a restore is a multi-step operation whose
+   numbers have to be readable in peace, before and after. */
+
+.restore-view {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.restore-file {
+  margin: -6px 0 0;
+  font-size: 0.9rem;
+}
+
+/* The four numbers the reader is asking for, in the order they are read. */
+.restore-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.restore-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 120px;
+  min-width: 0;
+}
+.restore-stat-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.restore-stat-label {
+  font-size: 0.8rem;
+  text-wrap: pretty;
+}
+
+.restore-section-title {
+  font-size: 1rem;
+  margin: 10px 0 0;
+}
+
+.restore-profiles {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.restore-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.restore-profile-row:last-child {
+  border-bottom: none;
+}
+.restore-profile-text {
+  flex: 1 1 160px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.restore-profile-name {
+  font-weight: 700;
+}
+.restore-profile-meta {
+  font-size: 0.85rem;
+}
+
+/* A native select, styled as the pill used for source kinds. */
+.restore-target {
+  font: inherit;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+.restore-target:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.restore-note {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+/* Overwriting a used profile's setup: a named decision, one open point —
+   a warn rule on the left rather than a full frame, like the review markers. */
+.restore-overwrite {
+  border-left: 3px solid var(--warn);
+  padding: 8px 0 8px 12px;
+  margin: 6px 0;
+}
+.restore-overwrite-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.restore-overwrite-label input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+.restore-overwrite-detail {
+  margin: 0 0 0 30px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.restore-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+/* ---- Summary ---- */
+
+.restore-done-added {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+}
+.restore-done-label {
+  font-size: 1rem;
+  font-weight: 700;
+}
+.restore-done-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--text);
+}
+.restore-done-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.restore-done-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.95rem;
+}
+.restore-done-warn {
+  color: var(--warn);
+  font-weight: 600;
+}

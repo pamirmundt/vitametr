@@ -27,6 +27,7 @@ import {
   BACKUP_FORMAT,
   ENCRYPTED_BACKUP_FORMAT,
   type EncryptedBackup,
+  type ProfileBackup,
   type VitametrBackup,
 } from '../export/json-backup.js';
 
@@ -47,6 +48,44 @@ function isEncryptedBackup(value: unknown): value is EncryptedBackup {
     (value as { format?: unknown }).format === ENCRYPTED_BACKUP_FORMAT &&
     typeof (value as { ciphertext?: unknown }).ciphertext === 'string'
   );
+}
+
+/**
+ * Read (and decrypt) a backup file without turning it into proposals yet — the
+ * restore screen has to show what is in the file before anything is written,
+ * and it needs the profiles and setup, not just the readings.
+ */
+export async function readBackupFile(
+  input: ImportInput,
+  password?: string,
+): Promise<VitametrBackup> {
+  return readBackup(input, password);
+}
+
+/** The readings of ONE profile in the file, as import proposals. */
+export function proposalsFromBackup(backup: ProfileBackup): ProposedMeasurement[] {
+  const sourceName = new Map(backup.sources.map((s) => [s.id, s.name]));
+  return backup.measurements.map((m): ProposedMeasurement => {
+    const name = m.sourceId !== undefined ? sourceName.get(m.sourceId) : undefined;
+    return {
+      // The backup stores a concrete MetricId; keep it resolved.
+      metric: m.metricId,
+      ...(m.value !== undefined ? { value: m.value } : {}),
+      ...(m.operator !== undefined ? { operator: m.operator } : {}),
+      ...(m.unit !== undefined ? { unit: m.unit } : {}),
+      takenAt: m.takenAt,
+      timePrecision: m.timePrecision,
+      ...(m.refLow !== undefined ? { refLow: m.refLow } : {}),
+      ...(m.refHigh !== undefined ? { refHigh: m.refHigh } : {}),
+      ...(m.refText !== undefined ? { refText: m.refText } : {}),
+      ...(name !== undefined ? { sourceName: name } : {}),
+      ...(m.note !== undefined ? { note: m.note } : {}),
+      ...(m.textValue !== undefined ? { textValue: m.textValue } : {}),
+      ...(m.textValues !== undefined ? { textValues: m.textValues } : {}),
+      ...(m.origin?.rawText !== undefined ? { rawText: m.origin.rawText } : {}),
+      confidence: 'high',
+    };
+  });
 }
 
 async function readBackup(input: ImportInput, password?: string): Promise<VitametrBackup> {
@@ -88,28 +127,8 @@ export const jsonBackupImportPlugin: ImportPlugin = {
   accepts: ['.json', 'application/json'],
 
   async parse(input: ImportInput, ctx: ImportContext): Promise<ProposedMeasurement[]> {
-    const backup = await readBackup(input, ctx.password);
-
-    const sourceName = new Map(backup.sources.map((s) => [s.id, s.name]));
-
-    return backup.measurements.map((m): ProposedMeasurement => {
-      const name = m.sourceId !== undefined ? sourceName.get(m.sourceId) : undefined;
-      return {
-        // The backup stores a concrete MetricId; keep it resolved.
-        metric: m.metricId,
-        value: m.value,
-        ...(m.operator !== undefined ? { operator: m.operator } : {}),
-        unit: m.unit,
-        takenAt: m.takenAt,
-        timePrecision: m.timePrecision,
-        ...(m.refLow !== undefined ? { refLow: m.refLow } : {}),
-        ...(m.refHigh !== undefined ? { refHigh: m.refHigh } : {}),
-        ...(m.refText !== undefined ? { refText: m.refText } : {}),
-        ...(name !== undefined ? { sourceName: name } : {}),
-        ...(m.note !== undefined ? { note: m.note } : {}),
-        ...(m.origin?.rawText !== undefined ? { rawText: m.origin.rawText } : {}),
-        confidence: 'high',
-      };
-    });
+    // Only the ACTIVE profile's readings: the other profiles in a device backup
+    // are restored whole by the restore flow, not through this pipeline.
+    return proposalsFromBackup(await readBackup(input, ctx.password));
   },
 };

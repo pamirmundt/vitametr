@@ -527,6 +527,15 @@ export function createStore(
       return opened;
     },
 
+    async readProfile(id: ProfileId): Promise<ProfileData> {
+      const session = requireUnlocked();
+      if (id === session.activeId) return session.data;
+      if (!session.directory.some((p) => p.id === id)) {
+        throw new Error(`Unknown profile: ${id}`);
+      }
+      return loadProfile(session.box, id);
+    },
+
     async renameProfile(id: ProfileId, name: string): Promise<void> {
       const session = requireUnlocked();
       if (!session.directory.some((p) => p.id === id)) {

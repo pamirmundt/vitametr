@@ -8,6 +8,7 @@ import { timelineView } from './timeline';
 import { entryView } from './entry';
 import { metricView } from './metric';
 import { reviewView } from './review';
+import { restoreView, restoreDoneView } from './restore';
 import { settingsView } from './settings';
 import { importView } from './import';
 import { importCsvView } from './import-csv';
@@ -27,6 +28,8 @@ export const VIEWS: Record<Route, View> = {
   'import-filter': importFilterView,
   export: exportView,
   review: reviewView,
+  restore: restoreView,
+  'restore-done': restoreDoneView,
   report: reportView,
   compare: compareView,
   'metrics-manage': metricsManageView,

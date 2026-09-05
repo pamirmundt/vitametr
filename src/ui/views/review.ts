@@ -22,6 +22,7 @@
 
 import type { AppContext, View } from '../app-context';
 import { profileDisplayName } from './settings-model';
+import { continueRestore, noteReviewResult } from './restore-flow';
 import { formatDateTime, formatNumber, plural } from '../../i18n/index';
 import type { StringKey } from '../../i18n/index';
 import './review.css';
@@ -83,6 +84,12 @@ export interface PendingImportMeta {
   pluginId?: string;
   /** Original picked/dropped file name, when available. */
   fileName?: string;
+  /**
+   * This batch is one step of a backup restore: on commit, control goes back to
+   * the restore flow (next profile, or the summary) instead of to the overview,
+   * and the counts are added to the restore's own summary.
+   */
+  restore?: boolean;
 }
 
 /**
@@ -360,6 +367,18 @@ export const reviewView: View = {
           }
         }
       });
+      // A restore reports its own numbers on its own screen, so it neither
+      // toasts nor goes to the overview — the run may still have profiles left.
+      if (meta.restore) {
+        noteReviewResult({
+          added,
+          skipped,
+          unassigned: state.filter((it) => it.decision !== 'reject' && !isResolved(it)).length,
+        });
+        setPendingImport([]);
+        void continueRestore(ctx);
+        return;
+      }
       ctx.toast(
         conflictsResolved > 0
           ? ctx.t('review.importedWithConflicts', { count: added, conflicts: conflictsResolved })

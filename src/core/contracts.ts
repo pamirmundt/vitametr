@@ -238,6 +238,12 @@ export interface StoreApi {
    * session key is the device's.
    */
   switchProfile(id: ProfileId): Promise<ProfileData>;
+  /**
+   * Read another profile's data WITHOUT opening it: no switch, no flush, no
+   * change to what `getData()` returns. For a whole-device backup, which has to
+   * see every profile while the user stays where they are.
+   */
+  readProfile(id: ProfileId): Promise<ProfileData>;
   /** Rename a profile (active or not); the name lives in both blob and directory. */
   renameProfile(id: ProfileId, name: string): Promise<void>;
   /**
@@ -306,6 +312,13 @@ export interface ExportSelection {
 
 export interface ExportContext {
   data: ProfileData;
+  /**
+   * The device's OTHER profiles, whole, when the caller means the export to
+   * cover everything rather than the profile on screen. Only the JSON backup
+   * uses it — an interoperability export (CSV, FHIR, a printed report) is about
+   * one person and must never quietly mix two.
+   */
+  otherProfiles?: ProfileData[];
   catalog: Catalog;
   units: UnitsEngine;
   locale: 'cs' | 'en';

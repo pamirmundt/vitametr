@@ -734,3 +734,45 @@ select.settings-inline-select {
   color: var(--accent);
   font-weight: 700;
 }
+
+/* ---- Backup scope (export dialog) --------------------------------------
+   What the file covers. Only from the second profile onwards — with one
+   profile there is nothing to choose. */
+
+.settings-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.settings-scope-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.settings-scope-option:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.settings-scope-option input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+.settings-scope-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.settings-scope-label {
+  font-weight: 700;
+}
+.settings-scope-meta {
+  font-size: 0.85rem;
+}

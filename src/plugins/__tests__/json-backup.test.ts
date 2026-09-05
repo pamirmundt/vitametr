@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createCatalog } from '../../core/catalog.js';
+import { createUnitsEngine } from '../../core/units.js';
 import { createImportPipeline, type ImportPipelineDeps } from '../../core/review.js';
 import { PassphraseRequiredError, WrongPassphraseError } from '../../core/contracts.js';
 import { CURRENT_SCHEMA_VERSION } from '../../core/types.js';
@@ -99,6 +100,10 @@ function meaningful(m: Measurement) {
     note: m.note,
     rawText: m.origin.rawText,
   };
+}
+
+function exportCtx(data: ProfileData) {
+  return { data, catalog: createCatalog(data), units: createUnitsEngine(), locale: 'cs' as const };
 }
 
 async function fileFromBlob(blob: Blob, name: string): Promise<File> {
@@ -245,5 +250,108 @@ describe('ExportSelection filtering', () => {
       range: { from: '2026-03-01' },
     });
     expect(out).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Carrying a whole profile — and a whole device — in the same file.
+// ---------------------------------------------------------------------------
+
+describe('a backup that carries the setup, not just the readings', () => {
+  /** A profile with everything a restore should be able to bring back. */
+  function furnished(): ProfileData {
+    const data = fixture();
+    data.profile.name = 'Milan';
+    data.metrics = [
+      {
+        id: 'user:1' as MetricId,
+        customName: 'Vlastní veličina',
+        aliases: ['vlastni'],
+        category: 'custom',
+        valueType: 'number',
+        canonicalUnit: 'mmol/L',
+        units: ['mmol/L'],
+        tags: ['builtin:watched'],
+      } as ProfileData['metrics'][number],
+    ];
+    data.units = [
+      { code: 'x/L', display: 'x/l', dimension: 'arbitrary', toBase: { factor: 1 } },
+    ] as ProfileData['units'];
+    data.disabledMetrics = ['builtin:psa' as MetricId];
+    data.importMappings = [
+      {
+        id: 'map-1',
+        sourceName: 'Moje laborka',
+        detect: { anyOf: ['MOJE'] },
+        pattern: '(?<name>.+)',
+      },
+    ] as ProfileData['importMappings'];
+    data.imports = [] as ProfileData['imports'];
+    data.settings = { locale: 'cs', unitSystem: 'us', useTags: false };
+    return data;
+  }
+
+  it('writes the parts a restore needs, beside the ones it always wrote', async () => {
+    const data = furnished();
+    const blob = await jsonBackupExportPlugin.export({}, exportCtx(data));
+    const backup = JSON.parse(await blob.text()) as Record<string, unknown>;
+
+    // Unchanged shape — an older build looks for exactly these.
+    expect(backup.format).toBe('vitametr-backup');
+    expect(backup.profile).toMatchObject({ name: 'Milan' });
+    expect(backup.measurements).toHaveLength(3);
+    // …plus the setup it used to leave behind.
+    expect(backup.units).toHaveLength(1);
+    expect(backup.disabledMetrics).toEqual(['builtin:psa']);
+    expect(backup.importMappings).toHaveLength(1);
+    expect(backup.settings).toMatchObject({ unitSystem: 'us', useTags: false });
+    expect(backup.metrics).toHaveLength(1);
+  });
+
+  it('carries the other profiles without repeating the active one', async () => {
+    const active = furnished();
+    const other = fixture();
+    other.profile = { id: 'p2' as ProfileId, name: 'Romana', createdAt: '2026-02-01' };
+
+    const blob = await jsonBackupExportPlugin.export({}, {
+      ...exportCtx(active),
+      otherProfiles: [other],
+    });
+    const backup = JSON.parse(await blob.text()) as Record<string, unknown>;
+
+    // The active profile stays exactly where every reader expects it, and the
+    // rest live beside it — so a single-profile backup is byte-for-byte what it
+    // was before, and a family backup is not twice the size.
+    expect(backup.profile).toMatchObject({ name: 'Milan' });
+    const others = backup.otherProfiles as { profile: { name: string } }[];
+    expect(others).toHaveLength(1);
+    expect(others[0].profile.name).toBe('Romana');
+    expect(JSON.stringify(others)).not.toContain('Milan');
+  });
+
+  it('leaves a single-profile backup exactly as it was', async () => {
+    const blob = await jsonBackupExportPlugin.export({}, exportCtx(fixture()));
+    const backup = JSON.parse(await blob.text()) as Record<string, unknown>;
+    expect(backup).not.toHaveProperty('otherProfiles');
+  });
+
+  it('still restores the readings of a file written before any of this', async () => {
+    // The previous release's envelope, verbatim: no units, no disabledMetrics,
+    // no otherProfiles. It must keep restoring, unchanged.
+    const legacy = {
+      format: 'vitametr-backup',
+      backupVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      profile: { id: PROFILE_ID, name: 'Test', createdAt: '2026-01-01' },
+      metrics: [],
+      sources: [{ id: SRC, name: 'Synlab, s.r.o.', kind: 'lab' }],
+      measurements: fixture().measurements,
+      settings: { locale: 'cs' },
+    };
+    const items = await jsonBackupImportPlugin.parse(
+      { kind: 'data', data: legacy },
+      { catalog: createCatalog(fixture()) },
+    );
+    expect(items).toHaveLength(3);
   });
 });

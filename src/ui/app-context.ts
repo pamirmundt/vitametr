@@ -28,6 +28,8 @@ export type Route =
   | 'import-filter'
   | 'export'
   | 'review'
+  | 'restore'
+  | 'restore-done'
   | 'report'
   | 'compare'
   | 'metrics-manage'

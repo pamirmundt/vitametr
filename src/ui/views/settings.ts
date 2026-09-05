@@ -874,32 +874,39 @@ function renderBackupSection(ctx: AppContext): HTMLElement {
   actions.append(jsonBtn);
 
   body.append(actions);
-  // A backup is one profile's data. With several tracked people that has to be
-  // said next to the button, not discovered when the file is restored.
-  if (ctx.profiles().length > 1) {
-    body.append(
-      textEl(
-        'p',
-        t('export.activeProfileOnly', {
-          name: profileDisplayName(ctx.data().profile.name, t),
-        }),
-        'muted settings-note',
-      ),
-    );
-  }
   body.append(textEl('p', t('settings.backupNote'), 'muted settings-note'));
   return card;
 }
 
 
-async function runExport(ctx: AppContext, kind: ExportKind, password?: string): Promise<void> {
+async function runExport(
+  ctx: AppContext,
+  kind: ExportKind,
+  password?: string,
+  scope: 'active' | 'all' = 'active',
+): Promise<void> {
   const plugin = exportPluginById(kind);
   if (!plugin) return;
+  // "All profiles" reads the others without opening them — the user stays where
+  // they are and nothing is switched under their feet.
+  const others =
+    scope === 'all'
+      ? await Promise.all(
+          ctx
+            .profiles()
+            .filter((p) => p.id !== ctx.activeProfileId())
+            .map((p) => ctx.store.readProfile(p.id)),
+        )
+      : [];
   const exportCtx: ExportContext = {
     data: ctx.data(),
     catalog: ctx.catalog(),
     units: ctx.units,
     locale: ctx.locale,
+    // Stamps the backup with when it was written, so a restore can say which
+    // file it is looking at. Injected — no plugin reads the clock.
+    nowIso: ctx.now(),
+    ...(others.length > 0 ? { otherProfiles: others } : {}),
   };
   // A non-empty password (json-backup only) yields an encrypted backup file.
   const selection: ExportSelection = password ? { password } : {};
@@ -908,7 +915,10 @@ async function runExport(ctx: AppContext, kind: ExportKind, password?: string): 
   try {
     const a = document.createElement('a');
     a.href = url;
-    a.download = buildExportFilename(kind, profileDisplayName(ctx.data().profile.name, ctx.t));
+    a.download = buildExportFilename(kind, profileDisplayName(ctx.data().profile.name, ctx.t), {
+      day: ctx.now(),
+      allProfiles: scope === 'all' && others.length > 0,
+    });
     document.body.append(a);
     a.click();
     a.remove();
@@ -943,6 +953,54 @@ function renderExportPasswordPrompt(ctx: AppContext): void {
   const repInput = passwordInput(t('onboarding.passphraseRepeat'));
   rep.wrap.append(repInput);
 
+  // What the file covers. Shown only from the second profile onwards: with one
+  // profile there is nothing to choose and the question would be noise. Both
+  // options carry their reading count — without it the choice is guesswork.
+  let scope: 'active' | 'all' = 'active';
+  const profiles = ctx.profiles();
+  if (profiles.length > 1) {
+    const activeName = profileDisplayName(ctx.data().profile.name, t);
+    const total = profiles.reduce((n, p) => n + p.measurementCount, 0);
+    const activeCount =
+      profiles.find((p) => p.id === ctx.activeProfileId())?.measurementCount ?? 0;
+    const group = el('div', 'settings-scope');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', t('settings.exportJson'));
+    const options: { id: 'active' | 'all'; label: string; meta: string }[] = [
+      {
+        id: 'active',
+        label: t('export.scopeActive', { name: activeName }),
+        meta: t('export.scopeCount', { n: activeCount }),
+      },
+      {
+        id: 'all',
+        label: t('export.scopeAll', { n: profiles.length }),
+        meta: `${t('export.scopeCount', { n: total })} · ${profiles
+          .map((p) => profileDisplayName(p.name, t))
+          .join(', ')}`,
+      },
+    ];
+    for (const option of options) {
+      const label = el('label', 'settings-scope-option');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'backup-scope';
+      radio.value = option.id;
+      radio.checked = option.id === scope;
+      radio.addEventListener('change', () => {
+        if (radio.checked) scope = option.id;
+      });
+      const text = el('span', 'settings-scope-text');
+      text.append(
+        textEl('span', option.label, 'settings-scope-label'),
+        textEl('span', option.meta, 'settings-scope-meta muted'),
+      );
+      label.append(radio, text);
+      group.append(label);
+    }
+    box.append(group);
+  }
+
   const error = inlineError();
   const row = el('div', 'settings-choice');
   const cancel = button(t('common.cancel'));
@@ -955,7 +1013,7 @@ function renderExportPasswordPrompt(ctx: AppContext): void {
     if (password === '') {
       // No password → plain backup.
       dialog.close();
-      void runExport(ctx, 'json-backup');
+      void runExport(ctx, 'json-backup', undefined, scope);
       return;
     }
     const issue = validateNewPassphrase(password, repInput.value);
@@ -967,7 +1025,7 @@ function renderExportPasswordPrompt(ctx: AppContext): void {
       return;
     }
     dialog.close();
-    void runExport(ctx, 'json-backup', password);
+    void runExport(ctx, 'json-backup', password, scope);
   };
   confirm.addEventListener('click', submit);
   repInput.addEventListener('keydown', (e) => {

@@ -19,11 +19,16 @@
 
 import type { ExportContext, ExportPlugin, ExportSelection } from '../../core/contracts.js';
 import type {
+  ImportMappingDef,
+  ImportRecord,
   Measurement,
   Metric,
+  MetricId,
   Profile,
+  ProfileData,
   ProfileSettings,
   Source,
+  UnitDef,
 } from '../../core/types.js';
 import {
   sealWithPassphrase,
@@ -43,7 +48,42 @@ export interface EncryptedBackup extends PassphraseEnvelope {
   backupVersion: typeof BACKUP_FORMAT_VERSION;
 }
 
-export interface VitametrBackup {
+/**
+ * Everything one profile is made of, as it travels in a backup. The measurement
+ * list is the only part an ExportSelection filters; the rest is what makes the
+ * readings mean something (which metrics exist, what units they use, which
+ * packs are on), so it is always written whole.
+ */
+export interface ProfileBackup {
+  profile: Profile;
+  metrics: Metric[];
+  sources: Source[];
+  measurements: Measurement[];
+  settings: ProfileSettings;
+  /** Custom unit definitions the profile added. */
+  units?: UnitDef[];
+  /** Built-in metrics switched off in this profile. */
+  disabledMetrics?: MetricId[];
+  /** Recorded file imports (provenance of the readings above). */
+  imports?: ImportRecord[];
+  /** User-added declarative import mappings. */
+  importMappings?: ImportMappingDef[];
+}
+
+/**
+ * The backup envelope.
+ *
+ * The ACTIVE profile's parts sit at the top level and always have — an older
+ * build looks for exactly `profile` / `metrics` / `sources` / `measurements` /
+ * `settings` there and keeps working with a file this build writes. Everything
+ * added since is optional and sits beside them, so the format never forked into
+ * "old" and "new": there is one file kind, and readers take what they know.
+ *
+ * `otherProfiles` deliberately excludes the active one rather than listing all
+ * of them uniformly: a single-profile backup then stays byte-for-byte what it
+ * was, and a family backup does not carry one profile twice.
+ */
+export interface VitametrBackup extends ProfileBackup {
   format: typeof BACKUP_FORMAT;
   /** Version of this envelope shape. */
   backupVersion: typeof BACKUP_FORMAT_VERSION;
@@ -51,11 +91,15 @@ export interface VitametrBackup {
   schemaVersion: number;
   /** Vitametr build that produced the backup (diagnostics only). */
   appVersion?: string;
-  profile: Profile;
-  metrics: Metric[];
-  sources: Source[];
-  measurements: Measurement[];
-  settings: ProfileSettings;
+  /**
+   * When the file was written (ISO 8601), from the caller's injected clock —
+   * no plugin reads the wall clock. Absent in files written before this, and in
+   * exports whose caller supplies no `nowIso`; the restore screen then simply
+   * omits the date rather than inventing one.
+   */
+  createdAt?: string;
+  /** Every OTHER profile on the device, whole. Absent for a single profile. */
+  otherProfiles?: ProfileBackup[];
 }
 
 /** ISO 8601 strings compare chronologically, so range filtering is a string compare. */
@@ -83,6 +127,21 @@ export function selectMeasurements(
   );
 }
 
+/** One profile's parts, with only the measurements the selection keeps. */
+function profileBackup(data: ProfileData, selection: ExportSelection): ProfileBackup {
+  return {
+    profile: data.profile,
+    metrics: data.metrics,
+    sources: data.sources,
+    measurements: selectMeasurements(data.measurements, selection),
+    settings: data.settings,
+    ...(data.units ? { units: data.units } : {}),
+    ...(data.disabledMetrics ? { disabledMetrics: data.disabledMetrics } : {}),
+    ...(data.imports ? { imports: data.imports } : {}),
+    ...(data.importMappings ? { importMappings: data.importMappings } : {}),
+  };
+}
+
 export const jsonBackupExportPlugin: ExportPlugin = {
   id: 'json-backup',
   nameKey: 'export.json-backup',
@@ -96,12 +155,15 @@ export const jsonBackupExportPlugin: ExportPlugin = {
       backupVersion: BACKUP_FORMAT_VERSION,
       schemaVersion: data.schemaVersion,
       appVersion: data.appVersion,
-      profile: data.profile,
-      metrics: data.metrics,
-      sources: data.sources,
-      measurements: selectMeasurements(data.measurements, selection),
-      settings: data.settings,
+      ...(ctx.nowIso !== undefined ? { createdAt: ctx.nowIso } : {}),
+      ...profileBackup(data, selection),
     };
+    // Other profiles are never filtered by the selection: the selection is a
+    // view of the profile on screen, and silently applying it to the others
+    // would produce a "backup" quietly missing someone else's readings.
+    if (ctx.otherProfiles && ctx.otherProfiles.length > 0) {
+      backup.otherProfiles = ctx.otherProfiles.map((p) => profileBackup(p, {}));
+    }
 
     // Pretty-printed for human inspectability; JSON is exact and lossless.
     const json = JSON.stringify(backup, null, 2);

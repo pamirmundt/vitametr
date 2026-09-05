@@ -62,6 +62,11 @@ export const STR = {
     createAndSwitch: 'Create and switch',
     profilesSection: 'Profiles',
     secondProfileName: 'Ellie',
+    exportJson: 'Backup (JSON)',
+    specificFormat: 'Specific format',
+    backupCard: 'Vitametr backup',
+    restoreContinue: /Continue to review/,
+    filterAll: 'All',
   },
   cs: {
     addValues: 'Zadat hodnoty',
@@ -91,5 +96,10 @@ export const STR = {
     createAndSwitch: 'Vytvořit a přepnout',
     profilesSection: 'Profily',
     secondProfileName: 'Eliška',
+    exportJson: 'Záloha (JSON)',
+    specificFormat: 'Konkrétní formát',
+    backupCard: 'Záloha Vitametru',
+    restoreContinue: /Pokračovat na kontrolu/,
+    filterAll: 'Vše',
   },
 };
