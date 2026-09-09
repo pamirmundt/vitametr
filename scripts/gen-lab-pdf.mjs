@@ -67,6 +67,52 @@ const HTML_SYNLAB = `<!doctype html><html lang="cs"><head><meta charset="utf-8">
   </table>
 </body></html>`;
 
+// The other common Czech column order, printed by several laboratory systems:
+// the evaluation bar sits BETWEEN the value and the reference range, the unit
+// column follows the range, and each row closes with the one-letter sample type
+// (B = blood, S = serum, G = fluoride plasma, U = urine — the same national
+// convention as the S_/U_ name prefixes). Read with the other order in mind,
+// every row of such a sheet yields the upper reference bound instead of the
+// result, so the layout has a fixture of its own. Fully synthetic.
+const HTML_UNIT_LAST = `<!doctype html><html lang="cs"><head><meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11px; color: #000; padding: 22px; }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  .meta { font-size: 10px; color: #333; margin-bottom: 10px; }
+  .sec { font-weight: bold; margin: 10px 0 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 2px 6px; border-bottom: 1px solid #ddd; }
+  th { border-bottom: 1px solid #000; font-size: 10px; }
+  .num { text-align: right; }
+  .bar { font-family: monospace; letter-spacing: 1px; }
+</style></head><body>
+  <h1>Výsledkový list</h1>
+  <div class="meta">Pacient: Testovací Vzor · Odběr: 02.03.2026 07:15 · Laboratorní č.: 1000001</div>
+
+  <div class="sec">Hematologie</div>
+  <table>
+    <tr><th>Název vyšetření</th><th class="num">Výsledek</th><th class="bar">Hodnocení</th><th>Referenční meze</th><th>Jednotka</th><th>Materiál</th></tr>
+    <tr><td>Leukocyty [WBC]</td><td class="num">6,2</td><td class="bar">| |*| |</td><td>4,0 - 10,0</td><td>10^9/l</td><td>B</td></tr>
+    <tr><td>Hematokrit [HCT]</td><td class="num">0,441</td><td class="bar">| |*| |</td><td>0,400 - 0,500</td><td>l/l</td><td>B</td></tr>
+    <tr><td>Neutrofily - relativně</td><td class="num">55,0</td><td class="bar">| |*| |</td><td>45,0 - 70,0</td><td>%</td><td>B</td></tr>
+    <tr><td>Neutrofily - abs.počet</td><td class="num">3,41</td><td class="bar">| |*| |</td><td>2,00 - 7,00</td><td>10^9/l</td><td>B</td></tr>
+  </table>
+
+  <div class="sec">Biochemie</div>
+  <table>
+    <tr><th>Název vyšetření</th><th class="num">Výsledek</th><th class="bar">Hodnocení</th><th>Referenční meze</th><th>Jednotka</th><th>Materiál</th></tr>
+    <tr><td>Kyselina močová</td><td class="num">325</td><td class="bar">| |*| |</td><td>220 - 420</td><td>µmol/l</td><td>S</td></tr>
+    <tr><td>Glukóza v plazmě</td><td class="num">5,13</td><td class="bar">| |*| |</td><td>3,50 - 5,59</td><td>mmol/l</td><td>G</td></tr>
+    <tr><td>Non-HDL cholesterol - výp</td><td class="num">3,1</td><td class="bar">| |*| |</td><td>0,0 - 3,7</td><td>mmol/l</td><td>S</td></tr>
+  </table>
+
+  <div class="sec">Moč — chemicky</div>
+  <table>
+    <tr><th>Název vyšetření</th><th class="num">Výsledek</th><th class="bar">Hodnocení</th><th>Referenční meze</th><th>Jednotka</th><th>Materiál</th></tr>
+    <tr><td>Glukóza</td><td class="num">negativní</td><td class="bar"></td><td>negativní</td><td></td><td>U</td></tr>
+  </table>
+</body></html>`;
+
 // An English-language chemistry panel (fully fictional "John Q. Doe"), to
 // cover the English parsing path with a committed fixture.
 const HTML_EN = `<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -312,12 +358,14 @@ async function main() {
     await page.pdf({ path: 'test/fixtures/labs/cz/lab-cs-full.pdf', ...pdfOpts });
     await page.setContent(HTML_NCLP, { waitUntil: 'load' });
     await page.pdf({ path: 'test/fixtures/labs/cz/lab-cs-nclp.pdf', ...pdfOpts });
+    await page.setContent(HTML_UNIT_LAST, { waitUntil: 'load' });
+    await page.pdf({ path: 'test/fixtures/labs/cz/lab-cs-unit-last.pdf', ...pdfOpts });
   } finally {
     await browser.close();
   }
   console.log(
     'Wrote lab-cs-result.pdf, lab-cs-synlab.pdf, lab-en-chemistry.pdf, lab-cs-praktik.pdf, ' +
-      'lab-cs-full.pdf, lab-cs-nclp.pdf',
+      'lab-cs-full.pdf, lab-cs-nclp.pdf, lab-cs-unit-last.pdf',
   );
 }
 
