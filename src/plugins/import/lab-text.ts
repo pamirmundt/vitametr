@@ -169,16 +169,68 @@ function findDocumentDate(lines: string[]): { iso: string; precision: 'date' | '
 }
 
 /**
- * A trailing graphical "evaluation" column — the in/out-of-range bar Czech
- * result sheets draw as pipes and a star (`| |*| |`). It sits to the right of
- * the reference range, so it must come off before the range is read; otherwise
- * the end-anchored range patterns never match and the range is lost.
+ * A graphical "evaluation" column — the in/out-of-range bar Czech result sheets
+ * draw as pipes and a star (`| |*| |`). Some sheets print it after the
+ * reference range, others between the value and the range, so it is removed
+ * wherever it stands: left in place it either hides the end-anchored range or
+ * separates the value from its own unit.
+ *
+ * A token qualifies only when it is made of bars and stars AND contains a bar —
+ * a lone `*` is the high/low flag, which the value reader still needs.
  */
-const EVAL_TAIL_RE = /\s+\|[\s|*]*$/;
+const BAR_TOKEN_RE = /^[|*]*\|[|*]*$/;
 
-/** Remove trailing layout artefacts that carry no data. */
+/**
+ * The sample-type column many sheets close each row with: one letter naming the
+ * material the analyte was measured in (B = blood, S = serum, U = urine …), the
+ * same national convention as the `S_`/`U_` name prefixes. It has to go before
+ * the unit is read — `S` also spells seconds and `G` grams, so a row ending in
+ * one is otherwise read as having that unit, which drags the value one column
+ * to the left with it.
+ *
+ * H and L are deliberately NOT in the set: those letters are the high/low result
+ * flag far more often than they are heparin or liquor.
+ */
+const SAMPLE_COLUMN_RE = /^(?:dU|MK|SL|[BSPGCTNFU])$/;
+
+/** Sample codes that mean a DIFFERENT metric, mapped to their name prefix. */
+const ROUTING_SAMPLE: Readonly<Record<string, string>> = { U: 'U_', dU: 'dU_', F: 'F_' };
+
+/** A name that already carries a specimen prefix must not be given a second one. */
+const HAS_SPECIMEN_PREFIX_RE = /^(?:dU|Pu|[SPBUFC])_/i;
+
+/** Remove layout artefacts that carry no data (the bar column, wherever it sits). */
 function stripEvaluationColumn(line: string): string {
-  return line.replace(EVAL_TAIL_RE, '').trimEnd();
+  return line
+    .split(/\s+/)
+    .filter((token) => token !== '' && !BAR_TOKEN_RE.test(token))
+    .join(' ');
+}
+
+/**
+ * Take the trailing sample-type column off a row. A material that means a
+ * genuinely different analyte (urine, 24h urine, stool) is not dropped but
+ * rewritten into the specimen prefix the name resolver already understands, so
+ * one convention's `Glukóza … U` and another's `U_Glukóza` reach the same metric.
+ */
+function stripSampleColumn(line: string): string {
+  const tokens = line.split(/\s+/);
+  // Name + value + the column itself: fewer tokens than that is not a row.
+  if (tokens.length < 3) return line;
+  const last = tokens[tokens.length - 1];
+  if (!SAMPLE_COLUMN_RE.test(last)) return line;
+  const rest = tokens.slice(0, -1);
+  const prefix = ROUTING_SAMPLE[last];
+  if (prefix === undefined || HAS_SPECIMEN_PREFIX_RE.test(rest[0])) return rest.join(' ');
+  return prefix + rest.join(' ');
+}
+
+/** True when the last token (past an optional flag) reads as a number. */
+function endsInNumber(tokens: readonly string[]): boolean {
+  let i = tokens.length - 1;
+  if (i >= 0 && FLAG_RE.test(tokens[i])) i -= 1;
+  if (i < 0) return false;
+  return !('error' in parseNumber(tokens[i]));
 }
 
 /**
@@ -220,32 +272,60 @@ function parseLine(
   }
   if (unitIndex < 0 || unitCode === undefined) return undefined;
 
-  // 3. Value: the numeric token immediately before the unit, skipping at most
-  //    one flag token (H / L / * / ↑ / ↓) between the value and the unit. A
-  //    censoring operator sitting just before the number (e.g. `< 0,10`) is
-  //    folded back in so parseNumber captures the operator.
-  let valueIndex = unitIndex - 1;
-  if (valueIndex >= 0 && FLAG_RE.test(tokens[valueIndex])) valueIndex -= 1;
+  // 3. The other column order: `<name> <value> <range> <unit>`, used by sheets
+  //    that print the unit to the RIGHT of the reference range. The range then
+  //    sits inside what is left of the row, where the end-anchored patterns of
+  //    step 1 could not see it — and the value reader below would take its
+  //    upper bound for the result. Only tried when step 1 found no range at
+  //    all, so the established layout is read exactly as before.
+  let head = tokens.slice(0, unitIndex);
+  if (refMatch === undefined) {
+    const headText = head.join(' ');
+    const inner = extractReference(headText);
+    const shortened = inner
+      ? headText
+          .slice(0, inner.index)
+          .trim()
+          .split(/\s+/)
+          .filter((t) => t !== '')
+      : [];
+    // Only a range that still leaves a value behind was a range: a censored
+    // result ("Erytrocyty < 4 počet/μL") ends in the very shape a "< X" limit
+    // has, and reading it as one would consume the result itself.
+    if (inner && shortened.length >= 2 && endsInNumber(shortened)) {
+      refLow = inner.refLow;
+      refHigh = inner.refHigh;
+      refText = inner.refText;
+      head = shortened;
+    }
+  }
+
+  // 4. Value: the last numeric token of what precedes the unit, skipping at
+  //    most one flag token (H / L / * / ↑ / ↓). A censoring operator sitting
+  //    just before the number (e.g. `< 0,10`) is folded back in so parseNumber
+  //    captures the operator.
+  let valueIndex = head.length - 1;
+  if (valueIndex >= 0 && FLAG_RE.test(head[valueIndex])) valueIndex -= 1;
   if (valueIndex < 0) return undefined;
 
   let valueStart = valueIndex;
-  if (valueStart - 1 >= 0 && OPERATOR_TOKEN_RE.test(tokens[valueStart - 1])) {
+  if (valueStart - 1 >= 0 && OPERATOR_TOKEN_RE.test(head[valueStart - 1])) {
     valueStart -= 1;
   }
 
-  const valueText = tokens.slice(valueStart, valueIndex + 1).join(' ');
+  const valueText = head.slice(valueStart, valueIndex + 1).join(' ');
   const parsedValue = parseNumber(valueText);
   if ('error' in parsedValue) return undefined;
 
-  // 4. Name: everything before the value (and its operator) token.
-  const name = tokens.slice(0, valueStart).join(' ').trim();
+  // 5. Name: everything before the value (and its operator) token.
+  const name = head.slice(0, valueStart).join(' ').trim();
   if (name === '') return undefined;
   // Reject obvious non-analyte rows: a label ending in ':' (e.g. "Evaluation:")
   // or a "name" that is only digits/punctuation (a scrambled multi-column row).
   if (name.endsWith(':')) return undefined;
   if (!/\p{L}/u.test(name)) return undefined;
 
-  // 5. Metric: resolve against the catalog; never guess.
+  // 6. Metric: resolve against the catalog; never guess.
   //    Dimension guard (spec §16, data integrity): a resolved name is only kept
   //    when the parsed unit is dimensionally compatible with that metric. A
   //    genuine mismatch (e.g. a GFR rate unit resolving onto creatinine via a
@@ -266,7 +346,7 @@ function parseLine(
     metric = { unresolvedName: resolved.unresolvedName };
   }
 
-  // 6. Confidence: high needs a resolved metric AND a recognized unit AND a
+  // 7. Confidence: high needs a resolved metric AND a recognized unit AND a
   //    date. The unit is always recognized here, so a resolved metric is high
   //    when a date exists, otherwise medium; an unresolved metric is low.
   const isUnresolved = typeof metric === 'object' && 'unresolvedName' in metric;
@@ -584,7 +664,7 @@ export function parseLabLines(lines: string[], catalog: Catalog): ProposedMeasur
       // A date header is not a result row — nothing else to read from it.
       continue;
     }
-    const cleaned = stripEvaluationColumn(line);
+    const cleaned = stripSampleColumn(stripEvaluationColumn(line));
     const proposal =
       parseLine(cleaned, catalog, date) ??
       parseQualitativeLine(cleaned, catalog, date) ??

@@ -426,6 +426,7 @@ export const cs: Record<keyof typeof en, string> = {
   'review.unitMissingHint': 'Laboratoř jednotku neuvedla. Vyber, ve které je hodnota uvedená.',
   'review.unitHistory': 'tvoje hodnoty {range}',
   'review.unitEquals': '= {value} {unit}',
+  'review.unitDerived': 'Laboratoř jednotku neuvedla. V jiné jednotce než {unit} by hodnota nebyla možná.',
   'review.unitInUse': 'používáš',
   'review.awaitingUnitOne': '{n} řádek čeká na určení jednotky.',
   'review.awaitingUnitFew': '{n} řádky čekají na určení jednotky.',

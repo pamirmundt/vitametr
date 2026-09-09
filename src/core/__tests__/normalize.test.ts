@@ -303,6 +303,63 @@ describe('resolveMetric', () => {
   });
 });
 
+describe('resolveMetric — the qualifiers labs append to an analyte name', () => {
+  /**
+   * One analyte, many spellings: the sheet writes the lab's own abbreviation
+   * next to the name, says whether a differential count is the share or the
+   * absolute number, names the tube the blood came in, and marks the values it
+   * computed rather than measured. None of that changes WHICH analyte the row
+   * is about — but every one of them used to be enough to send the row to
+   * review as an unknown name, and a hand-assigned row is where a share and a
+   * count get mixed up.
+   */
+  const cat = realCatalog();
+  const id = (name: string) => {
+    const r = resolveMetric(name, cat);
+    return 'metricId' in r ? r.metricId : undefined;
+  };
+
+  it('reads a bracketed lab abbreviation like a parenthesised one', () => {
+    expect(id('Leukocyty [WBC]')).toBe('builtin:leukocytes' as MetricId);
+    expect(id('Hematokrit [HCT]')).toBe('builtin:hematocrit' as MetricId);
+  });
+
+  it('resolves the "relatively" spelling of a differential share', () => {
+    expect(id('Neutrofily - relativně')).toBe('builtin:neutrophils' as MetricId);
+    expect(id('Lymfocyty rel.')).toBe('builtin:lymphocytes' as MetricId);
+  });
+
+  it('keeps the share and the absolute count apart', () => {
+    // The two are separate metrics that move independently; a qualifier that
+    // points at the count must never land on the share metric (nor the other
+    // way round). With no home of its own the row goes to review — unresolved
+    // is recoverable, a wrong metric is not.
+    expect(id('Neutrofily - abs.počet')).toBe('builtin:neutrophils-absolute' as MetricId);
+    expect(id('Erytrocyty - relativně')).toBeUndefined();
+  });
+
+  it('ignores a blood-family specimen phrase, which names the tube, not the analyte', () => {
+    expect(id('Glukóza v plazmě')).toBe('builtin:glucose' as MetricId);
+    expect(id('Kreatinin v séru')).toBe('builtin:creatinine' as MetricId);
+  });
+
+  it('never ignores a specimen phrase that DOES change the analyte', () => {
+    // Urine glucose is its own metric; "v moči" is not decoration.
+    expect(id('Glukóza v moči')).toBe('builtin:urine-glucose' as MetricId);
+    expect(id('Glukóza v moči')).not.toBe('builtin:glucose' as MetricId);
+  });
+
+  it('reads an abbreviation that brought its own parenthesis', () => {
+    // "Lp(a)" is the analyte's name; "Lipoprotein" in front of it is the word
+    // the lab spells it out with, and "(a)" alone is nothing at all.
+    expect(id('Lipoprotein Lp(a)')).toBe('builtin:lipoprotein-a' as MetricId);
+  });
+
+  it('ignores a "calculated" marker', () => {
+    expect(id('Non-HDL cholesterol - výp')).toBe('builtin:non-hdl-cholesterol' as MetricId);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // normalizeProposal
 // ---------------------------------------------------------------------------
@@ -335,6 +392,29 @@ describe('normalizeProposal', () => {
     expect(out.unit).toBeUndefined();
     expect(out.confidence).toBe('medium');
     expect(out.rawText).toBe('raw');
+  });
+
+  it('refuses to attach a name-resolved metric the row-s unit cannot belong to', () => {
+    // Lp(a) is kept in nmol/L and has no fixed particle mass, so a g/L reading
+    // of it is NOT the same quantity — there is no conversion between them. The
+    // parser already refuses such a pairing; normalization must not quietly put
+    // it back together, or the value lands on a history it can never be drawn
+    // in (spec §16, data integrity).
+    const out = normalizeProposal(
+      { metric: { unresolvedName: 'Lipoprotein Lp(a)' }, value: 0.744, unit: 'g/L', confidence: 'low' },
+      realCatalog(),
+    );
+    expect(out.metric).toEqual({ unresolvedName: 'Lipoprotein Lp(a)' });
+  });
+
+  it('attaches the metric when the unit merely needs converting', () => {
+    // mg/dL is not the catalog unit for glucose but converts to it exactly.
+    const out = normalizeProposal(
+      { metric: { unresolvedName: 'Glukóza' }, value: 99, unit: 'mg/dl', confidence: 'medium' },
+      realCatalog(),
+    );
+    expect(out.metric).toBe('builtin:glucose' as MetricId);
+    expect(out.unit).toBe('mg/dL');
   });
 
   it('keeps unresolved metric name when catalog misses', () => {

@@ -516,6 +516,15 @@ function buildRow(
       element.classList.toggle('review-item--needs-unit', needsUnit(item));
       if ((item.unitChoices?.length ?? 0) > 0 && p.unit === undefined) {
         element.append(buildUnitChoice(ctx, state, index, refresh, onChange));
+      } else if (item.unitDerived === true && p.unit !== undefined) {
+        // The unit was read off the number rather than off the sheet. That is a
+        // deduction, not a guess — but a unit nobody typed still has to say
+        // where it came from, or the row silently claims more than it knows.
+        const note = el('p', 'muted review-unit-hint review-unit-derived');
+        note.textContent = ctx.t('review.unitDerived', {
+          unit: unitLabel(ctx.units, p.unit, ctx.t),
+        });
+        element.append(note);
       }
       // A row still waiting for its unit cannot be accepted (spec §16), so it
       // gets no accept/reject toggle until the choice is made.

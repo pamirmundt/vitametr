@@ -116,6 +116,56 @@ describe('ImportPipeline.prepare', () => {
     expect(item.unitChoices).toBeUndefined();
   });
 
+  it('reads the unit off the number when only one of the candidates can hold it', () => {
+    const proposals: ProposedMeasurement[] = [
+      // Hematocrit is a volume fraction: 0,451 is a plausible L/L reading and an
+      // impossible one in %, where it would mean a 0,45 % hematocrit. Nothing is
+      // guessed — the other candidate is arithmetically out of the question, so
+      // there is no choice left to offer.
+      { metric: { unresolvedName: 'Hematokrit' }, value: 0.451, confidence: 'medium' },
+    ];
+    const [item] = pipeline.prepare(proposals, { catalog });
+    expect(item.resolvedMetricId).toBe('builtin:hematocrit');
+    expect(item.unitChoices).toBeUndefined();
+    expect(item.proposed.unit).toBe('L/L');
+    expect(item.unitDerived).toBe(true);
+  });
+
+  it('reads the same metric the other way round when the number is the percentage', () => {
+    const proposals: ProposedMeasurement[] = [
+      { metric: { unresolvedName: 'Hematokrit' }, value: 45.1, confidence: 'medium' },
+    ];
+    const [item] = pipeline.prepare(proposals, { catalog });
+    expect(item.proposed.unit).toBe('%');
+    expect(item.unitChoices).toBeUndefined();
+  });
+
+  it('still asks when the number is plausible in more than one candidate unit', () => {
+    const proposals: ProposedMeasurement[] = [
+      // A white-cell share has no narrow typical range — 0,551 is a believable
+      // 55,1 % share AND a believable 0,551 % one, so the row stays blocked and
+      // the user decides.
+      { metric: { unresolvedName: 'Neutrofily' }, value: 0.551, confidence: 'medium' },
+    ];
+    const [item] = pipeline.prepare(proposals, { catalog });
+    expect(item.resolvedMetricId).toBe('builtin:neutrophils');
+    expect(item.unitChoices).toEqual(['%', '1']);
+    expect(item.proposed.unit).toBeUndefined();
+    expect(item.unitDerived).toBeUndefined();
+  });
+
+  it('asks rather than drops the row when no candidate unit fits the typical range', () => {
+    // A hematocrit of 9 is outside the typical range in BOTH candidate units.
+    // "None of them fits" is not evidence for any of them, so the closed set is
+    // offered whole instead of the row being decided or discarded.
+    const proposals: ProposedMeasurement[] = [
+      { metric: { unresolvedName: 'Hematokrit' }, value: 9, confidence: 'medium' },
+    ];
+    const [item] = pipeline.prepare(proposals, { catalog });
+    expect(item.unitChoices).toEqual(['L/L', '%']);
+    expect(item.proposed.unit).toBeUndefined();
+  });
+
   it('asks for no unit on a qualitative result, even on a multi-unit metric', () => {
     const proposals: ProposedMeasurement[] = [
       // A Czech dipstick reads "negativní" — there is no number for a unit to

@@ -60,40 +60,62 @@ test('a unitless row blocks its own import until the unit is chosen', async ({ p
   // The footer says how many rows the bulk action will leave behind.
   await expect(page.locator('.review-awaiting-unit')).toContainText('waiting for');
 
-  const hematocrit = page.locator('.review-item--needs-unit').filter({ hasText: 'Hematocrit' });
-  await expect(hematocrit).toBeVisible();
+  // A white-cell share is the row that genuinely cannot be read without help:
+  // 0,551 is a believable 55,1 % share AND a believable 0,551 % one.
+  const neutrophils = page.locator('.review-item--needs-unit').filter({ hasText: 'Neutrophils' });
+  await expect(neutrophils).toBeVisible();
   // No accept/reject toggle while the value has no unit — it cannot be imported.
-  await expect(hematocrit.locator('.review-decision')).toHaveCount(0);
+  await expect(neutrophils.locator('.review-decision')).toHaveCount(0);
 
   // One option per candidate unit, each showing what the value would actually
   // mean — the contrast between the readings IS the decision.
-  const options = hematocrit.locator('.review-unit-option');
+  const options = neutrophils.locator('.review-unit-option');
   await expect(options).toHaveCount(2);
   // The SAME number read in each candidate unit — that is the actual question
-  // ("is this 0.451 L/L or 0.451 %"), not a conversion of one into the other.
-  await expect(options.filter({ hasText: '0.451 L/L' })).toHaveCount(1);
-  await expect(options.filter({ hasText: '0.451 %' })).toHaveCount(1);
+  // ("is this 0.551 % or 0.551 of the whole"), not a conversion of one into the other.
+  await expect(options.filter({ hasText: '0.551 %' })).toHaveCount(1);
+  await expect(options.filter({ hasText: '0.551 ratio' })).toHaveCount(1);
   // A closed set with exactly one right answer: radios, not toggles.
-  await expect(hematocrit.locator('[role="radiogroup"]')).toHaveCount(1);
+  await expect(neutrophils.locator('[role="radiogroup"]')).toHaveCount(1);
   await expect(options.first()).toHaveAttribute('role', 'radio');
-  // This profile has no hematocrit history, so both options fall back to what
+  // This profile has no history for the metric, so both options fall back to what
   // they would mean elsewhere — symmetrically, never one filled and one empty.
   await expect(options.nth(0).locator('.review-unit-history')).toContainText('=');
   await expect(options.nth(1).locator('.review-unit-history')).toContainText('=');
   // The canonical unit leads the candidates (a fact about the catalog).
-  await expect(options.first()).toContainText('0.451 l/l');
+  await expect(options.first()).toContainText('0.551 %');
 
   const before = Number(await page.locator('.review-count').innerText());
 
-  await options.filter({ hasText: '0.451 L/L' }).click();
+  await options.filter({ hasText: '0.551 ratio' }).click();
 
   // The row settles: it leaves the blocked state, gains its accept/reject toggle
   // and joins the import count.
   await expect(page.locator('.review-item--needs-unit')).toHaveCount(blockedCount - 1);
   await expect(
-    page.locator('.review-item').filter({ hasText: 'Hematocrit' }).locator('.review-decision'),
+    page.locator('.review-item').filter({ hasText: 'Neutrophils' }).first().locator('.review-decision'),
   ).toBeVisible();
   await expect(page.locator('.review-count')).toHaveText(String(before + 1));
+
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+test('a unitless row whose number can only be read one way is not a question', async ({ page }) => {
+  const errors = trackErrors(page);
+  await toReview(page);
+
+  // The same sheet states hematocrit without a unit too — but 0,451 is an
+  // everyday L/L reading and, as a percentage, a value incompatible with being
+  // alive. Nothing is left to choose, so the row is never held back; it does say
+  // where the unit came from, because nobody typed it.
+  const hematocrit = page.locator('.review-item').filter({ hasText: 'Hematocrit' });
+  await expect(hematocrit).toBeVisible();
+  await expect(hematocrit).not.toHaveClass(/review-item--needs-unit/);
+  await expect(hematocrit.locator('.review-unit-option')).toHaveCount(0);
+  await expect(hematocrit).toContainText('0.451 l/l');
+  await expect(hematocrit.locator('.review-unit-derived')).toContainText('stated no unit');
+  // It is a row like any other: it can be accepted and imported.
+  await expect(hematocrit.locator('.review-decision')).toBeVisible();
 
   expect(errors, errors.join('\n')).toEqual([]);
 });
@@ -104,32 +126,34 @@ test('the chosen unit is what gets stored, and a misclick is one tap from fixed'
   const errors = trackErrors(page);
   await toReview(page);
 
-  const hematocrit = page.locator('.review-item--needs-unit').filter({ hasText: 'Hematocrit' });
-  const row = page.locator('.review-item').filter({ hasText: 'Hematocrit' });
+  const blockedRow = page.locator('.review-item--needs-unit').filter({ hasText: 'Neutrophils' });
+  const row = page.locator('.review-item').filter({ hasText: 'Neutrophils' }).first();
   const options = row.locator('.review-unit-option');
 
   // Pick the wrong one first: the chooser stays on the row, so switching to the
   // other option is one tap. There is no way back to "nothing chosen" — the set
   // is closed and one of them is true.
-  await options.filter({ hasText: '0.451 %' }).click();
-  await expect(options.filter({ hasText: '0.451 %' })).toHaveAttribute('aria-checked', 'true');
-  await options.filter({ hasText: '0.451 L/L' }).click();
-  await expect(options.filter({ hasText: '0.451 L/L' })).toHaveAttribute('aria-checked', 'true');
-  await expect(options.filter({ hasText: '0.451 %' })).toHaveAttribute('aria-checked', 'false');
+  await options.filter({ hasText: '0.551 %' }).click();
+  await expect(options.filter({ hasText: '0.551 %' })).toHaveAttribute('aria-checked', 'true');
+  await options.filter({ hasText: '0.551 ratio' }).click();
+  await expect(options.filter({ hasText: '0.551 ratio' })).toHaveAttribute('aria-checked', 'true');
+  await expect(options.filter({ hasText: '0.551 %' })).toHaveAttribute('aria-checked', 'false');
 
   // Nothing is missing any more: the badge, its sentence and the warn edge all
   // go, and the row joins the import like any other accepted one.
-  await expect(hematocrit).toHaveCount(0);
+  await expect(blockedRow).toHaveCount(0);
   await expect(row.locator('.review-unit-missing')).toHaveCount(0);
   await expect(row.locator('.review-unit-hint')).toHaveCount(0);
   await expect(row.locator('.review-decision')).toBeVisible();
 
-  // The measurement carries the chosen unit.
+  // The measurement carries the chosen unit — and the app shows it in the unit
+  // the metric is kept in, which is the whole point of storing a unit at all:
+  // 0,551 of the whole IS 55,1 %.
   await page.getByRole('button', { name: /Import selected/ }).click();
   await expect(page).toHaveURL(/#\/overview$/);
 
-  await page.locator('.app-content button').filter({ hasText: 'Hematocrit' }).first().click();
-  await expect(page.locator('.app-content')).toContainText('0.451');
+  await page.locator('.app-content button').filter({ hasText: 'Neutrophils' }).first().click();
+  await expect(page.locator('.app-content')).toContainText('55.1');
 
   expect(errors, errors.join('\n')).toEqual([]);
 });

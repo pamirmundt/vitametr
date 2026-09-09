@@ -356,6 +356,14 @@ export interface ReviewItem {
   unitChoices?: string[];
   /** The unit the user picked from {@link unitChoices}. */
   unitChoice?: string;
+  /**
+   * Set when `prepare` read the unit off the number itself: the file stated
+   * none, the metric admits several, and all but one of them would put the
+   * value outside what the analyte can physically read. That is a deduction,
+   * not a preference, but the review screen still says so out loud — a unit
+   * nobody typed should never appear without a word about where it came from.
+   */
+  unitDerived?: boolean;
 }
 
 export interface ImportPipeline {

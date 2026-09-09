@@ -430,6 +430,7 @@ export const en = {
   'review.unitMissingHint': 'The lab stated no unit. Pick the one this value is in.',
   'review.unitHistory': 'your values {range}',
   'review.unitEquals': '= {value} {unit}',
+  'review.unitDerived': 'The lab stated no unit. In anything other than {unit} the value would be impossible.',
   'review.unitInUse': 'in use',
   'review.awaitingUnitOne': '{n} row is waiting for its unit.',
   'review.awaitingUnitFew': '{n} rows are waiting for their unit.',

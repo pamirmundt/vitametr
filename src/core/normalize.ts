@@ -16,8 +16,16 @@
 
 import type { Catalog } from './contracts.js';
 import { isDistinctSpecimen, splitAnalyteName } from './lab-names.js';
-import type { MetricId, Operator, ProposedMeasurement, TimePrecision } from './types.js';
+import type { Metric, MetricId, Operator, ProposedMeasurement, TimePrecision } from './types.js';
 import { UNITS } from './units-data.js';
+import { createUnitsEngine, isUnitCompatibleWithMetric } from './units.js';
+
+/**
+ * Shared engine for the dimension guard below. Built from the built-in unit
+ * table and never reloaded — a unit spelling outside it has already been
+ * dropped by {@link normalizeUnit} before the guard is reached.
+ */
+const unitsEngine = createUnitsEngine();
 
 // ---------------------------------------------------------------------------
 // parseNumber
@@ -288,6 +296,97 @@ export function parseDateTime(raw: string): ParsedDateTime | undefined {
 export type ResolveMetricResult = { metricId: MetricId } | { unresolvedName: string };
 
 /**
+ * What a trailing qualifier on an analyte name says about the row.
+ *
+ * `plain` qualifiers say nothing about WHICH analyte it is — which tube the
+ * blood came in, or that the lab computed the value instead of measuring it —
+ * so the name is simply retried without them. `relative` and `absolute` do
+ * pick a metric: the white-cell differential exists both as a share of all
+ * leukocytes and as an absolute count, and those are separate metrics that
+ * move independently. A qualifier of that kind is therefore checked against
+ * the metric that comes back, and a mismatch leaves the row unresolved rather
+ * than putting a count onto the share's history (spec §16).
+ */
+type QualifierKind = 'relative' | 'absolute' | 'plain';
+
+/** Qualifier spellings, keyed by {@link qualifierKey}. */
+const QUALIFIERS: ReadonlyMap<string, QualifierKind> = new Map<string, QualifierKind>([
+  ['rel', 'relative'],
+  ['relativ', 'relative'],
+  ['relativne', 'relative'],
+  ['relative', 'relative'],
+  ['relativepercentage', 'relative'],
+  ['abs', 'absolute'],
+  ['abspocet', 'absolute'],
+  ['absolutnipocet', 'absolute'],
+  ['absolutne', 'absolute'],
+  ['absolute', 'absolute'],
+  ['absolutecount', 'absolute'],
+  ['vyp', 'plain'],
+  ['vypocet', 'plain'],
+  ['vypocteno', 'plain'],
+  ['vypocitano', 'plain'],
+  ['calc', 'plain'],
+  ['calculated', 'plain'],
+  // Serum and plasma are where a biochemistry analyte is normally measured, so
+  // naming the tube is decoration — the same reading the `S_`/`P_` prefixes get.
+  // "Whole blood" is deliberately NOT here: it is a different matrix and shifts
+  // the value (whole-blood glucose runs some 11 % below plasma), so a name that
+  // says it belongs in review rather than on the plasma metric's history.
+  ['vplazme', 'plain'],
+  ['vseru', 'plain'],
+  ['inplasma', 'plain'],
+  ['inserum', 'plain'],
+]);
+
+/** Comparison key: lowercase, no diacritics, no punctuation, no spaces. */
+function qualifierKey(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+/**
+ * The longest trailing qualifier the name carries, and the name without it.
+ * Never consumes the whole name — a qualifier alone is not an analyte.
+ */
+function splitQualifier(name: string): { base: string; kind: QualifierKind } | undefined {
+  const tokens = name.split(/\s+/).filter((t) => t !== '');
+  // Longest tail first, so "abs. počet" wins over "počet".
+  for (let take = Math.min(3, tokens.length - 1); take >= 1; take--) {
+    const kind = QUALIFIERS.get(qualifierKey(tokens.slice(tokens.length - take).join('')));
+    if (kind === undefined) continue;
+    const base = tokens
+      .slice(0, tokens.length - take)
+      .join(' ')
+      .replace(/[\s\-–,;:]+$/u, '')
+      .trim();
+    if (base !== '') return { base, kind };
+  }
+  return undefined;
+}
+
+/** Unit codes that express a share of a whole (%, a bare ratio, L/L, …). */
+const FRACTION_UNITS: ReadonlySet<string> = new Set(
+  UNITS.filter((u) => u.dimension === 'fraction').map((u) => u.code),
+);
+
+/** True when the metric records a share rather than a count or a concentration. */
+function isShareMetric(metric: Metric): boolean {
+  return (
+    FRACTION_UNITS.has(metric.canonicalUnit) || metric.units.some((u) => FRACTION_UNITS.has(u))
+  );
+}
+
+/** Whether the metric that came back is the twin the qualifier asked for. */
+function qualifierFits(kind: QualifierKind, metric: Metric): boolean {
+  if (kind === 'plain') return true;
+  return kind === 'relative' ? isShareMetric(metric) : !isShareMetric(metric);
+}
+
+/**
  * A trailing method-version year, as labs append to a computed estimate's name
  * ("CKD-EPI 2021", "MDRD 2006"). It identifies the equation revision, not a
  * different analyte, so it is dropped on a retry.
@@ -330,8 +429,9 @@ export function resolveMetric(name: string, catalog: Catalog): ResolveMetricResu
 
   // Common lab style "Full name (ABBR)" — e.g. "Glykovaný hemoglobin (HbA1c)"
   // or "Volný tyroxin (fT4)". Retry with the trailing parenthetical removed,
-  // then with the parenthetical content alone.
-  const paren = /^(.*?)\s*\(([^)]+)\)\s*$/.exec(bare);
+  // then with the parenthetical content alone. Square brackets are the same
+  // convention in another sheet's typography ("Leukocyty [WBC]").
+  const paren = /^(.*?)\s*[([]([^)\]]+)[)\]]\s*$/.exec(bare);
   if (paren) {
     const base = paren[1].trim();
     const inner = paren[2].trim();
@@ -346,12 +446,32 @@ export function resolveMetric(name: string, catalog: Catalog): ResolveMetricResu
     }
     const alt = (base !== '' && catalog.resolveAlias(base)) || (inner !== '' && catalog.resolveAlias(inner));
     if (alt) return { metricId: alt.id };
+
+    // "Lipoprotein Lp(a)": here the parenthesis belongs to the abbreviation, so
+    // the analyte's name is the trailing TOKEN — not the words in front of it,
+    // and not the single letter inside the brackets.
+    const lastToken = bare.split(/\s+/).pop() ?? '';
+    if (lastToken !== bare && /[([]/.test(lastToken)) {
+      const abbreviated = catalog.resolveAlias(lastToken);
+      if (abbreviated) return { metricId: abbreviated.id };
+    }
   }
 
   const year = METHOD_YEAR_RE.exec(bare);
   if (year) {
     const withoutYear = catalog.resolveAlias(year[1]);
     if (withoutYear) return { metricId: withoutYear.id };
+  }
+
+  // Last: a trailing qualifier. Retried through the whole chain above, so a
+  // name may carry more than one ("Leukocyty [WBC] - relativně").
+  const qualified = splitQualifier(bare);
+  if (qualified) {
+    const inner = resolveMetric(qualified.base, catalog);
+    if ('metricId' in inner) {
+      const metric = catalog.byId(inner.metricId);
+      if (metric && qualifierFits(qualified.kind, metric)) return { metricId: inner.metricId };
+    }
   }
 
   return { unresolvedName: bare };
@@ -387,14 +507,8 @@ export function normalizeProposal(
 ): ProposedMeasurement {
   const out: ProposedMeasurement = { ...p };
 
-  // Metric: attempt resolution only when still unresolved.
-  if (typeof out.metric === 'object' && 'unresolvedName' in out.metric) {
-    const resolved = resolveMetric(out.metric.unresolvedName, catalog);
-    out.metric =
-      'metricId' in resolved ? resolved.metricId : { unresolvedName: resolved.unresolvedName };
-  }
-
-  // Unit: normalize when present; drop and lower confidence if unrecognized.
+  // Unit first: the metric guard below compares against the normalized code.
+  // Normalize when present; drop and lower confidence if unrecognized.
   if (out.unit !== undefined) {
     const normalized = normalizeUnit(out.unit);
     if (normalized === undefined) {
@@ -402,6 +516,28 @@ export function normalizeProposal(
       out.confidence = lowerConfidence(out.confidence);
     } else {
       out.unit = normalized;
+    }
+  }
+
+  // Metric: attempt resolution only when still unresolved.
+  if (typeof out.metric === 'object' && 'unresolvedName' in out.metric) {
+    const rawName = out.metric.unresolvedName;
+    const resolved = resolveMetric(rawName, catalog);
+    if ('metricId' in resolved) {
+      // Dimension guard (spec §16, data integrity): a name is only trustworthy
+      // when the row's unit can belong to that metric at all. A file's own
+      // parser applies the same guard, and normalization must not undo it —
+      // an unconvertible unit on the right-sounding name is a reading that
+      // could never be drawn on that metric's chart, so the row goes to review
+      // under its own name instead.
+      const metric = catalog.byId(resolved.metricId);
+      const fits =
+        metric === undefined ||
+        out.unit === undefined ||
+        isUnitCompatibleWithMetric(unitsEngine, metric, out.unit);
+      out.metric = fits ? resolved.metricId : { unresolvedName: rawName };
+    } else {
+      out.metric = { unresolvedName: resolved.unresolvedName };
     }
   }
 

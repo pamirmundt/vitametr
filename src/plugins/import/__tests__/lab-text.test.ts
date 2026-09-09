@@ -627,3 +627,62 @@ describe('parseLabLines — an abbreviation nobody has seen before', () => {
     expect(p.textValue).toBeUndefined();
   });
 });
+
+describe('parseLabLines — a sheet whose unit column follows the reference range', () => {
+  /**
+   * The other common Czech result-sheet layout puts the columns in the order
+   * printed in its own header: `Výsledek | Hodnocení | Referenční meze |
+   * Jednotka | Materiál`. Three things sit where the older reader did not
+   * expect them — the in/out-of-range bar in the MIDDLE of the row, the unit
+   * AFTER the range, and a one-letter sample-type column at the very end —
+   * and each of them alone is enough to make the row read as a different
+   * number than the one printed on it.
+   */
+  const SHEET: string[] = [
+    'Výsledkový list',
+    'Odběr: 09.09.2026 06:57',
+    'Název vyšetření Výsledek Hodnocení Referenční meze Jednotka Materiál',
+    'Leukocyty [WBC] 6,2 | |*| | 4,0 - 10,0 10^9/l B',
+    'Hematokrit [HCT] 0,441 | |*| | 0,400 - 0,500 l/l B',
+    'Neutrofily - relativně 55,0 | |*| | 45,0 - 70,0 % B',
+    'Neutrofily - abs.počet 3,41 | |*| | 2,00 - 7,00 10^9/l B',
+    'Kyselina močová 325 | |*| | 220 - 420 μmol/l S',
+    'Glukóza v plazmě 5,13 | |*| | 3,50 - 5,59 mmol/l G',
+    'Non-HDL cholesterol - výp 3,1 | |*| | 0,0 - 3,7 mmol/l S',
+  ];
+
+  const parsed = () => parseLabLines(SHEET, catalog());
+  const row = (name: string) =>
+    parsed().find((p) => (p.rawText ?? '').startsWith(name));
+
+  it('reads the printed value, not the upper reference bound behind it', () => {
+    const p = row('Leukocyty');
+    expect(p).toBeDefined();
+    expect(p?.value).toBeCloseTo(6.2, CLOSE);
+    expect(p?.refLow).toBeCloseTo(4, CLOSE);
+    expect(p?.refHigh).toBeCloseTo(10, CLOSE);
+    expect(p?.unit).toBe('10*9/L');
+  });
+
+  it('does not mistake the sample-type column for a unit (S is not seconds)', () => {
+    const p = row('Kyselina močová');
+    expect(p).toBeDefined();
+    expect(p?.unit).toBe('umol/L');
+    expect(p?.value).toBeCloseTo(325, CLOSE);
+    expect(p?.metric).toBe('builtin:uric-acid' as MetricId);
+  });
+
+  it('keeps every analyte row of the sheet', () => {
+    // The seven analyte rows all survive; the title, the draw date and the
+    // column header are not rows and must not produce anything.
+    expect(parsed()).toHaveLength(SHEET.length - 3);
+  });
+
+  it('stamps the rows with the sheet-s draw date', () => {
+    expect(row('Leukocyty')?.takenAt?.startsWith('2026-09-09')).toBe(true);
+  });
+
+  it('records the row exactly as printed, bar and sample column included', () => {
+    expect(row('Leukocyty')?.rawText).toBe('Leukocyty [WBC] 6,2 | |*| | 4,0 - 10,0 10^9/l B');
+  });
+});
