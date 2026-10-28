@@ -298,10 +298,22 @@
   }
 }
 
+/* Shared sizing keeps the icon/text and text-only header actions aligned. */
+.overview-asof-btn,
+.overview-summary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* Summary / print button: gains an accent-soft highlight while the overview is
    filtered (a signal it will carry the filter to the report). */
 .overview-summary-btn {
-  white-space: nowrap;
   transition: background 0.15s;
 }
 .overview-summary-btn.is-filter {
@@ -369,11 +381,7 @@
 
 /* As-of (time-travel) ghost button + revealed pill date input. */
 .overview-asof-btn {
-  display: inline-flex;
-  align-items: center;
   gap: 6px;
-  font-size: 0.9rem;
-  white-space: nowrap;
 }
 .overview-asof-btn[hidden],
 .overview-asof-date[hidden] {
